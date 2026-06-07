@@ -7,17 +7,13 @@ description: >
   The workflow analyzes the imported project, extracts real source code, creates Markdown
   drafts for user confirmation, then uses bundled DOCX tooling to produce final
   Word documents and TXT.
-user-invocable: true
-compatibility: >
-  Requires Python 3.10+ with python-docx (pip install python-docx).
-  Optional: .NET SDK 8.0+ for full OpenXML DOCX validation (run vendor/docx-toolkit/scripts/setup.sh).
 allowed-tools: >
   Bash, Read, Write, Edit, Glob, Grep, WebSearch, WebFetch
 metadata:
   short-description: 生成软著申请资料 Word/TXT
   author: Fokkyp
-  version: "1.0"
-  repository: https://github.com/Fokkyp/SoftwareCopyright-Skill
+  version: "1.1"
+  repository: https://github.com/ydds123/software-copyright-materials
 ---
 
 ## ⛔ 执行模式：分阶段交付，不是一次性交付
@@ -150,8 +146,11 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/init_task.py \
 
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/check_environment.py \
-  --out-dir <任务根目录>/<软著名称>/软件著作权申请资料
+  --out-dir <任务根目录>/<软著名称>/软件著作权申请资料 \
+  --feishu-doc "<可编辑的飞书在线文档 URL 或 token>"
 ```
+
+如果用户明确不使用飞书画板，改用 `--skip-feishu`。飞书 CLI 的安装、授权和调用细节见 `references/feishu_cli_setup.md`。
 
 输出：
 
@@ -163,16 +162,18 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/check_environment.py \
 - 当前会在”当前目录/软件著作权申请资料”下生成材料。
 - Markdown 草稿、TXT、基础 DOCX 是否可用。
 - 内置 `vendor/docx-toolkit` 的完整 OpenXML 环境是否可用。
-- **lark-cli 和 whiteboard-cli 是否可用**（用于生成技术图表到飞书画板）。
+- 飞书两步检查：
+  1. `lark-cli` 是否安装、用户授权是否有效，`whiteboard-cli` 是否可用。
+  2. 是否通过 `--feishu-doc` 指定用户可编辑的飞书在线文档。
 - 如 `.NET SDK` 缺失，询问用户是否安装完整环境。
-- 如 lark-cli 或 whiteboard-cli 不可用，告知用户技术图表功能将降级为 Markdown 文本描述。
+- 如飞书 CLI、用户授权或目标文档未就绪，询问用户是处理缺项还是明确使用 `--skip-feishu`。
 
 用户选择：
 
 - 如果用户愿意安装完整环境，按 `${CLAUDE_SKILL_DIR}/vendor/docx-toolkit/scripts/setup.sh` 的要求安装依赖，再继续。完整环境生成和校验更规范。
 - 如果用户不安装，继续使用兜底方案生成 Markdown、TXT 和基础 DOCX。
 - 如果完整 DOCX 环境缺失，必须停止并等待用户选择；不得自动继续。
-- 如果 lark-cli 或 whiteboard-cli 不可用，不阻塞流程，但需在环境检查报告中标注”技术图表功能降级”。
+- 如果飞书第一步或第二步检查未通过，必须停止并等待用户补齐，或让用户明确选择 `--skip-feishu` 后重新运行环境检查。
 
 用户回复后记录门禁：
 
@@ -551,7 +552,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/confirm_stage.py \
 
 ### 9. 生成技术图表（飞书画板）
 
-**前置检查**：开始生成图表前，必须运行 `lark-cli auth status --verify` 确认 user token 有效且 `tokenStatus` 为 `valid`。如 user token 已过期（`tokenStatus: expired`），停止并提示用户运行 `lark-cli auth login`。不得以 bot 身份创建画板——bot 的 `board:whiteboard:node:create` scope 存在，但目标知识库文档的编辑权限仅对 user 开放。
+**前置检查**：读取 `环境检查.json`。如果 `feishu.skipped` 为 `true`，按用户确认的降级方案处理；否则必须确认 `capabilities.feishu_charts` 为 `true`，并从 `feishu.target_document` 读取目标文档。不得使用其他硬编码文档。开始生成图表前，再运行 `lark-cli auth status --verify` 确认 user token 有效且 `tokenStatus` 为 `valid`。不得以 bot 身份创建画板。
 
 2026 年新政要求操作手册需包含软件结构图、功能流程图、逻辑框图、接口设计说明等技术图表。图表统一绘制到飞书知识库画板，一个画板一张图，便于嵌入操作手册和后续维护。
 
@@ -582,11 +583,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/confirm_stage.py \
 - 总图：`化桉企业培训管理系统-系统架构图`、`化桉企业培训管理系统-功能模块图`、…
 - 分图：`化桉企业培训管理系统-线上培训管理操作流程`、`化桉企业培训管理系统-考试管理操作流程`、…
 
-**统一目标文档**：所有画板创建到以下飞书知识库页面：
-```
-https://my.feishu.cn/wiki/CWDqw6vMwidfGhkvOjWc2uAcnHf
-```
-> 该文档仅用于集中存放软著技术图表画板，不存放其他内容。总图和分图全部写入此文档，按先总后分的顺序排列。
+**统一目标文档**：所有画板创建到环境检查阶段由用户指定的 `feishu.target_document`。该文档用于集中存放本次软著技术图表画板；总图和分图按先总后分的顺序排列。
 
 **图表数量预估**（以化桉企业培训管理系统为例）：
 
@@ -617,7 +614,7 @@ https://my.feishu.cn/wiki/CWDqw6vMwidfGhkvOjWc2uAcnHf
 ```bash
 # 1. 在目标文档末尾追加空白画板
 lark-cli docs +update --api-version v2 \
-  --doc CWDqw6vMwidfGhkvOjWc2uAcnHf \
+  --doc "<环境检查.json 中的 feishu.target_document>" \
   --command append \
   --content '<whiteboard type=”blank”></whiteboard>' \
   --as user

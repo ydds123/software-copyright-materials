@@ -222,14 +222,17 @@ def check_environment_gate(out: Path) -> None:
     env = read_json(env_path)
     if not env.get("requires_user_input"):
         return
-    confirmation_path = workdir / "环境确认.json"
+    gate_path = workdir / "门禁状态.json"
+    legacy_confirmation_path = workdir / "环境确认.json"
     confirmed = False
-    if confirmation_path.exists():
-        confirmed = bool(read_json(confirmation_path).get("environment_confirmed"))
+    if gate_path.exists():
+        confirmed = bool(read_json(gate_path).get("environment", {}).get("confirmed"))
+    elif legacy_confirmation_path.exists():
+        confirmed = bool(read_json(legacy_confirmation_path).get("environment_confirmed"))
     if not confirmed:
         raise SystemExit(
             "STOP_FOR_USER\n"
-            "NEXT_ACTION: 完整 DOCX 环境未确认。请先让用户选择安装完整环境或使用基础 DOCX 兜底继续，"
+            "NEXT_ACTION: 环境检查仍有未确认事项。请先按 环境检查.md 处理 DOCX 和飞书相关选择，"
             "然后运行 `python3 <SKILL_DIR>/scripts/confirm_stage.py --workdir 软件著作权申请资料 --stage environment --note \"<用户选择>\"`。"
         )
 

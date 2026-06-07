@@ -5,10 +5,13 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from common import confirm_params, ensure_dir, resolve_task_dir, resolve_workdir, write_json
 
@@ -32,7 +35,14 @@ def resolve_command(command_name: str) -> str:
         for ext in (".cmd", ".exe"):
             candidate = command_name + ext
             try:
-                subprocess.run([candidate, "--version"], text=True, capture_output=True, timeout=10)
+                subprocess.run(
+                    [candidate, "--version"],
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    capture_output=True,
+                    timeout=10,
+                )
                 # resolve_command only returns the name used for invocation; shell=True not needed
                 return candidate
             except Exception:
@@ -44,11 +54,62 @@ def resolve_command(command_name: str) -> str:
 def command_version(command: list[str]) -> tuple[bool, str]:
     try:
         resolved = [resolve_command(command[0]), *command[1:]]
-        completed = subprocess.run(resolved, text=True, capture_output=True, timeout=20)
+        completed = subprocess.run(
+            resolved,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            timeout=20,
+        )
         output = (completed.stdout or completed.stderr).strip().splitlines()
         return completed.returncode == 0, output[0] if output else "available"
     except Exception as exc:
         return False, str(exc)
+
+
+def command_output(command: list[str]) -> tuple[bool, str]:
+    try:
+        resolved = [resolve_command(command[0]), *command[1:]]
+        completed = subprocess.run(
+            resolved,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            timeout=30,
+        )
+        output = (completed.stdout or completed.stderr).strip()
+        return completed.returncode == 0, output or "available"
+    except Exception as exc:
+        return False, str(exc)
+
+
+def check_lark_user_auth() -> tuple[bool, str]:
+    ok, output = command_output(["lark-cli", "auth", "status", "--verify"])
+    if not ok:
+        return False, output
+    try:
+        status = json.loads(output)
+    except json.JSONDecodeError:
+        return False, output
+    ready = status.get("identity") == "user" and status.get("tokenStatus") == "valid"
+    if ready:
+        return True, f"user token valid: {status.get('userName', 'unknown user')}"
+    return False, str(status.get("note") or f"identity={status.get('identity')}, tokenStatus={status.get('tokenStatus')}")
+
+
+def is_feishu_document_target(value: str | None) -> bool:
+    target = (value or "").strip()
+    if not target:
+        return False
+    if re.fullmatch(r"[A-Za-z0-9_-]{10,}", target):
+        return True
+    parsed = urlparse(target)
+    host = parsed.netloc.lower()
+    valid_host = host.endswith(".feishu.cn") or host.endswith(".larksuite.com") or host.endswith(".larkoffice.com")
+    valid_path = any(part in parsed.path for part in ("/docx/", "/docs/", "/wiki/"))
+    return parsed.scheme in ("http", "https") and valid_host and valid_path
 
 
 def major_version(version: str) -> int:
@@ -117,28 +178,42 @@ def module_available(name: str) -> bool:
     return importlib.util.find_spec(name) is not None
 
 
-def check_environment(skill_dir: Path) -> dict[str, Any]:
+def check_environment(skill_dir: Path, feishu_doc: str = "", skip_feishu: bool = False) -> dict[str, Any]:
     python_docx = module_available("docx")
     pandoc_ok, pandoc_version = command_version(["pandoc", "--version"])
     dotnet_ok, dotnet_version = command_version(["dotnet", "--version"])
     docx_ready, docx_output = run_docx_env(skill_dir)
 
     lark_cli_ok, lark_cli_version = command_version(["lark-cli", "--version"])
-    whiteboard_cli_ok, whiteboard_cli_version = command_version(["npx", "-y", "@larksuite/whiteboard-cli@^0.2.10", "-v"])
-    charts_ready = lark_cli_ok and whiteboard_cli_ok
-    charts_status = (
-        "完整飞书画板图表环境可用"
-        if charts_ready
-        else ("lark-cli 不可用" if not lark_cli_ok else "whiteboard-cli 不可用")
+    lark_user_auth_ok, lark_user_auth_status = (
+        (False, "skipped")
+        if skip_feishu
+        else (check_lark_user_auth() if lark_cli_ok else (False, "lark-cli not installed"))
     )
+    whiteboard_cli_ok, whiteboard_cli_version = (
+        (False, "skipped")
+        if skip_feishu
+        else command_version(["npx", "-y", "@larksuite/whiteboard-cli@^0.2.10", "-v"])
+    )
+    feishu_doc = feishu_doc.strip()
+    feishu_doc_ready = is_feishu_document_target(feishu_doc)
+    charts_ready = not skip_feishu and lark_cli_ok and lark_user_auth_ok and whiteboard_cli_ok and feishu_doc_ready
 
     final_docx_mode = "docx-openxml" if docx_ready else ("python-docx" if python_docx else "basic-ooxml")
-    requires_user_input = not docx_ready
-    next_action = (
-        "请选择：1) 安装完整 DOCX 环境；2) 使用基础 DOCX 兜底继续。回复选择后再进入项目分析。"
-        if requires_user_input
-        else "完整 DOCX 环境可用，可以进入项目分析。"
-    )
+    action_items: list[str] = []
+    if not docx_ready:
+        action_items.append("选择安装完整 DOCX 环境，或确认使用基础 DOCX 兜底")
+    if not skip_feishu:
+        if not lark_cli_ok:
+            action_items.append("安装并配置 lark-cli，或明确选择 --skip-feishu")
+        elif not lark_user_auth_ok:
+            action_items.append("运行 lark-cli auth login --recommend 完成用户授权，或明确选择 --skip-feishu")
+        if not whiteboard_cli_ok:
+            action_items.append("确认 npx 可调用 @larksuite/whiteboard-cli，或明确选择 --skip-feishu")
+        if not feishu_doc_ready:
+            action_items.append("用 --feishu-doc 指定可编辑的飞书在线文档 URL/token，或明确选择 --skip-feishu")
+    requires_user_input = bool(action_items)
+    next_action = "；".join(action_items) if action_items else "环境检查通过，可以进入项目分析。"
     return {
         "output_directory": "项目目录/<年份>年软件著作权申请资料/<软件名称>/",
         "capabilities": {
@@ -150,14 +225,23 @@ def check_environment(skill_dir: Path) -> dict[str, Any]:
             "docx_openxml_full": docx_ready,
             "dotnet_sdk": dotnet_ok,
             "lark_cli": lark_cli_ok,
+            "lark_user_auth": lark_user_auth_ok,
             "whiteboard_cli": whiteboard_cli_ok,
+            "feishu_target_document": feishu_doc_ready,
             "feishu_charts": charts_ready,
+            "feishu_skipped": skip_feishu,
         },
         "versions": {
             "pandoc": pandoc_version,
             "dotnet": dotnet_version,
             "lark_cli": lark_cli_version,
             "whiteboard_cli": whiteboard_cli_version,
+        },
+        "feishu": {
+            "target_document": feishu_doc or None,
+            "target_document_valid": feishu_doc_ready,
+            "user_auth_status": lark_user_auth_status,
+            "skipped": skip_feishu,
         },
         "final_docx_mode": final_docx_mode,
         "recommendation": (
@@ -173,6 +257,7 @@ def check_environment(skill_dir: Path) -> dict[str, Any]:
         "requires_user_input": requires_user_input,
         "confirmation_stage": "environment" if requires_user_input else None,
         "next_action": next_action,
+        "pending_actions": action_items,
         "docx_env_output": docx_output,
     }
 
@@ -194,9 +279,22 @@ def write_markdown(path: Path, data: dict[str, Any]) -> None:
         f"- pandoc 预览：{'可用' if caps['pandoc_preview'] else '不可用'}（{data['versions']['pandoc']}）",
         f"- .NET SDK：{'可用' if caps['dotnet_sdk'] else '不可用'}（{data['versions']['dotnet']}）",
         f"- DOCX OpenXML 完整环境：{'可用' if caps['docx_openxml_full'] else '不可用'}",
+        "",
+        "## 飞书两步检查",
+        "",
+        "### 第一步：CLI 与用户授权",
+        "",
         f"- lark-cli：{'可用' if caps['lark_cli'] else '不可用'}（{data['versions']['lark_cli']}）",
-        f"- whiteboard-cli：{'可用' if caps['whiteboard_cli'] else '不可用'}（{data['versions']['whiteboard_cli']}）",
-        f"- 飞书画板图表环境：{'可用' if caps['feishu_charts'] else '不可用 — 技术图表将降级为 Markdown 文本描述'}",
+        f"- 用户授权：{'已跳过检查' if caps['feishu_skipped'] else ('有效' if caps['lark_user_auth'] else '无效或未登录')}（{data['feishu']['user_auth_status']}）",
+        f"- whiteboard-cli：{'已跳过检查' if caps['feishu_skipped'] else ('可用' if caps['whiteboard_cli'] else '不可用')}（{data['versions']['whiteboard_cli']}）",
+        "",
+        "### 第二步：目标在线文档",
+        "",
+        f"- 已指定目标文档：{'是' if caps['feishu_target_document'] else '否'}",
+        f"- 目标文档：`{data['feishu']['target_document'] or '未指定'}`",
+        f"- 跳过飞书图表：{'是' if caps['feishu_skipped'] else '否'}",
+        f"- 飞书画板图表环境：{'可用' if caps['feishu_charts'] else '不可用 — 未显式跳过时需先处理上述缺项'}",
+        "",
         "## 建议",
         "",
         data["recommendation"],
@@ -205,7 +303,7 @@ def write_markdown(path: Path, data: dict[str, Any]) -> None:
         "",
         data["install_prompt"],
         "",
-        "如果完整 DOCX 环境不可用，必须先等待用户选择，并记录 `environment` 门禁后再继续。",
+        "如果存在待处理项，必须先等待用户选择，并记录 `environment` 门禁后再继续。",
         "",
         "```text" if data.get("requires_user_input") else "",
         "STOP_FOR_USER" if data.get("requires_user_input") else "",
@@ -226,6 +324,8 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out-dir", help="Output dir; auto-derived from --task-dir if omitted")
     parser.add_argument("--task-dir", help="Task root dir; auto-resolved from current directory if omitted")
+    parser.add_argument("--feishu-doc", default="", help="Editable Feishu document URL or token used to hold whiteboards")
+    parser.add_argument("--skip-feishu", action="store_true", help="Explicitly skip Feishu whiteboard diagrams")
     parser.add_argument("--confirm", action="store_true", help="Confirmed by user, proceed with execution")
     args = parser.parse_args()
 
@@ -239,9 +339,17 @@ def main() -> None:
         raise SystemExit("找不到任务目录。请用 --task-dir 指定。")
     ensure_dir(out_dir)
 
-    confirm_params({"输出目录": str(out_dir), "任务目录": str(task_dir or out_dir.parent)}, args.confirm)
+    confirm_params(
+        {
+            "输出目录": str(out_dir),
+            "任务目录": str(task_dir or out_dir.parent),
+            "飞书目标文档": args.feishu_doc or "未指定",
+            "跳过飞书图表": "是" if args.skip_feishu else "否",
+        },
+        args.confirm,
+    )
 
-    data = check_environment(skill_dir)
+    data = check_environment(skill_dir, args.feishu_doc, args.skip_feishu)
     write_json(out_dir / "环境检查.json", data)
     write_markdown(out_dir / "环境检查.md", data)
     print(f"OK environment check: {out_dir}")
