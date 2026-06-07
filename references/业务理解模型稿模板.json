@@ -1,0 +1,355 @@
+{
+  "_说明": "业务理解模型稿模板。该文件是静态参考，脚本不再生成。模型收到 Step 4 的证据后，以此为骨架填写各字段。",
+  "software_name": "由用户确认的软件全称",
+  "product_positioning": "",
+  "industry": "",
+  "target_users": [
+    {
+      "role": "",
+      "focus": "",
+      "usage": ""
+    }
+  ],
+  "core_value": "",
+  "business_features": [],
+  "business_feature_details": {},
+  "operation_flow": [
+    {
+      "step": "模型填写真实业务动作，例如维护基础台账",
+      "result": "模型填写该动作完成后的真实页面反馈、状态变化或后续流转结果。"
+    }
+  ],
+  "application_purpose": "",
+  "main_functions": "",
+  "technical_characteristics": "",
+  "software_technical_option": "应用软件",
+  "software_category": "应用软件 - 行业管理软件",
+  "manual_sections": [
+    {
+      "title": "模型自行命名章节",
+      "intent": "说明该章节为什么适合当前项目。",
+      "paragraphs": [],
+      "include_feature_overview": false,
+      "include_operation_modules": false,
+      "include_operation_flow": false
+    }
+  ],
+  "_说明2": "manual_modules 必须按模块操作类型分类填写。分类规则见 references/module_classification_rules.md。台账型用 registry 结构，业务型用 business_operation 结构，混合型两者都填。",
+  "_说明3": "client_endpoint 标注该模块属于哪个端。单端系统全部写 web；多端系统按实际分 web/app/screen。渲染器据此按端聚合章节。",
+  "_说明4": "role_chain / upstream_dependency / downstream_impact 是可选叙事字段。填写后渲染器会在模块正文中嵌入角色叙事和业务上下文——比仅靠 purpose+visible_elements 的模板化输出更接近目标态样本的叙事密度。",
+  "system_endpoints": ["web"],
+  "manual_modules": [
+    {
+      "_示例_台账型": "适用于设备管理、二维码管理、NFC标签管理等纯CRUD模块",
+      "title": "台账型模块示例 — 设备设施管理",
+      "module_type": "registry",
+      "client_endpoint": "web",
+      "evidence": [
+        "src/views/inspection/facility/index.vue"
+      ],
+      "role_chain": "安全管理员 → 巡检点配置员 → 现场巡检人员",
+      "upstream_dependency": "无需前置模块——设备台账是巡检体系的基础层",
+      "downstream_impact": "巡检点绑定设备设施作为检查对象——缺设备台账则巡检点无法创建——巡检计划无法编排",
+      "purpose": "该台账在软件中的用途。",
+      "usage": "什么场景下使用。",
+      "entry": "从哪里进入。",
+      "registry": {
+        "list": {
+          "columns": [
+            "逐列列出表格中所有列名，不准用等字省略"
+          ],
+          "filters": [
+            "逐项列出所有搜索条件"
+          ],
+          "top_actions": [
+            "逐项列出表格上方按钮，如: 新增设备、删除、更多(下载模板/导入/导出)"
+          ],
+          "row_actions": [
+            "逐项列出每行操作按钮，如: 修改、查看详情、检查项目、维修记录、删除"
+          ]
+        },
+        "create": {
+          "form_sections": [
+            {
+              "section_name": "基本信息",
+              "fields": [
+                "设备编码",
+                "设备名称",
+                "设备类别/类型",
+                "责任部门",
+                "责任人",
+                "..."
+              ],
+              "rules": [
+                "设备编码不可重复",
+                "设备名称必填",
+                "..."
+              ]
+            },
+            {
+              "section_name": "维保信息",
+              "conditional_on": "是否定期维保=是",
+              "fields": [
+                "维保周期",
+                "维保有效期起止",
+                "维保内容"
+              ],
+              "rules": [
+                "维保周期为正整数"
+              ]
+            }
+          ]
+        },
+        "edit": {
+          "same_as_create_plus": [
+            "编码不可修改"
+          ]
+        },
+        "detail": {
+          "info_sections": [
+            "基本信息区",
+            "维保记录区"
+          ]
+        },
+        "import_export": {
+          "supports_import": true,
+          "import_template_download": true,
+          "supports_export": true
+        }
+      },
+      "screenshot": "截图预留说明"
+    },
+    {
+      "_示例_业务型": "适用于巡检计划、任务执行、签到、检查项等有状态流转或操作链路的模块",
+      "title": "业务型模块示例 — 巡检计划管理",
+      "module_type": "business",
+      "client_endpoint": "web",
+      "evidence": [
+        "src/views/inspection/planned/index.vue"
+      ],
+      "role_chain": "安全管理员 → 班组负责人 → 现场巡检人员",
+      "upstream_dependency": "巡检点必须已创建并关联检查项目——巡检计划中的路线由巡检点组成",
+      "downstream_impact": "巡检计划开启后系统按周期自动生成巡检任务——任务推送到 App 端——任务完成后的异常转入隐患排查",
+      "purpose": "该业务流程在软件中的用途。",
+      "usage": "用户在什么业务场景下使用。",
+      "entry": "从哪里进入。",
+      "object_lifecycle": {
+        "states": [
+          "草稿",
+          "已开启",
+          "已关闭"
+        ]
+      },
+      "business_operation": {
+        "entry_conditions": [
+          "巡检点已创建",
+          "工作日历已配置"
+        ],
+        "list_view_actions": [
+          "批量开启",
+          "批量关闭",
+          "批量推送",
+          "导入",
+          "导出"
+        ],
+        "row_actions": [
+          "修改",
+          "复制计划",
+          "查看详情",
+          "立即推送",
+          "删除"
+        ],
+        "operation_chain": [
+          {
+            "phase": "配置基础信息",
+            "actor": "安全管理员",
+            "trigger": "点击新增计划",
+            "sub_operations": [
+              {
+                "name": "填写基本信息",
+                "action": "填写计划名称，选择排查类型和任务类型，选择责任部门",
+                "visible_controls": [
+                  "计划名称输入框",
+                  "排查类型下拉",
+                  "任务类型下拉",
+                  "责任部门选择器"
+                ]
+              },
+              {
+                "name": "包保履职开关",
+                "action": "勾选是否包保履职计划，若勾选则选择所属分析对象",
+                "fork_condition": "勾选则激活分析对象选择器",
+                "visible_controls": [
+                  "包保履职开关",
+                  "分析对象选择器(条件显示)"
+                ],
+                "constraint": "包保履职模式下分析对象必选"
+              }
+            ]
+          },
+          {
+            "phase": "配置周期规则",
+            "actor": "安全管理员",
+            "sub_operations": [
+              {
+                "name": "选择任务类型",
+                "action": "周期任务或临时一次性"
+              },
+              {
+                "name": "固定周期配置",
+                "conditional_on": "选择固定周期",
+                "action": "设置周期间隔和单位(小时/天/周/月/季/年)，配置任务生成起止时段"
+              },
+              {
+                "name": "自定义周期配置",
+                "conditional_on": "选择自定义周期",
+                "action": "打开独立对话框，为每天精确配置多个任务时段"
+              },
+              {
+                "name": "高级规则",
+                "action": "设置提前巡检时间、逾期补检时间、是否跨天"
+              }
+            ]
+          },
+          {
+            "phase": "配置推送与巡检点",
+            "actor": "安全管理员",
+            "sub_operations": [
+              {
+                "name": "推送设置",
+                "action": "选择向人员/岗位/角色/部门推送，支持多选搜索"
+              },
+              {
+                "name": "巡检点路线",
+                "action": "搜索选择巡检点，拖拽排序，选择检查项"
+              }
+            ]
+          }
+        ]
+      },
+      "screenshot": "截图预留说明"
+    },
+    {
+      "_示例_混合型": "适用于台账面+业务配置面的模块，如巡检点管理",
+      "title": "混合型模块示例 — 巡检点管理",
+      "module_type": "hybrid",
+      "client_endpoint": "web",
+      "evidence": [
+        "src/views/inspection/checkpoint/index.vue"
+      ],
+      "role_chain": "安全管理员 → 巡检计划编排员 → 现场巡检人员",
+      "upstream_dependency": "设备设施已在台账中录入——NFC标签已在NFC标签管理模块中注册——检查标准已在排查标准库中配置",
+      "downstream_impact": "巡检点被巡检计划引用为路线节点——巡检计划生效后按路线顺序生成巡检点的检查任务",
+      "purpose": "该模块在软件中的用途。",
+      "registry": {
+        "list": {
+          "columns": [
+            "..."
+          ],
+          "filters": [
+            "..."
+          ],
+          "top_actions": [
+            "..."
+          ],
+          "row_actions": [
+            "..."
+          ]
+        }
+      },
+      "business_operation": {
+        "entry_conditions": [
+          "NFC标签已注册(如选NFC签到)",
+          "二维码已生成(如选二维码签到)"
+        ],
+        "config_paths": [
+          {
+            "path_name": "双重预防路径",
+            "trigger": "双重预防机制开关=是",
+            "config_chain": [
+              {
+                "step": "关联排查对象",
+                "fields": [
+                  "排查对象",
+                  "排查项目",
+                  "排查标准"
+                ],
+                "references": "隐患排查库"
+              }
+            ],
+            "outcome": "巡检点关联双重预防机制排查体系"
+          },
+          {
+            "path_name": "设备检查路径",
+            "trigger": "双重预防机制开关=否",
+            "config_chain": [
+              {
+                "step": "添加检查设备",
+                "fields": [
+                  "设备",
+                  "检查项目",
+                  "检查标准",
+                  "参数信息",
+                  "管控措施"
+                ],
+                "references": "设备台账"
+              },
+              {
+                "step": "自定义检查对象(可选)",
+                "fields": [
+                  "对象名称",
+                  "检查项目",
+                  "检查标准"
+                ],
+                "references": "无"
+              }
+            ],
+            "outcome": "巡检点关联设备和自定义检查对象"
+          },
+          {
+            "path_name": "包保履职路径",
+            "trigger": "包保任务开关=是",
+            "config_chain": [
+              {
+                "step": "配置包保责任人",
+                "fields": [
+                  "责任人类型",
+                  "关联分析单元"
+                ],
+                "references": "分析单元"
+              }
+            ],
+            "outcome": "巡检点纳入包保履职计划"
+          }
+        ]
+      },
+      "screenshot": "截图预留说明"
+    }
+  ],
+  "system_requirements": [
+    {
+      "item": "操作系统",
+      "minimum": "按项目实际填写",
+      "recommended": "按项目实际填写"
+    }
+  ],
+  "faq": [
+    {
+      "question": "按当前软件真实使用场景填写常见问题",
+      "answer": "给出面向普通用户的处理方法。"
+    }
+  ],
+  "glossary": [
+    {
+      "term": "当前软件中的业务术语",
+      "definition": "用普通中文解释含义。"
+    }
+  ],
+  "model_review_notes": [
+    "操作手册应采用软著审核友好骨架：相关文档、说明、功能特点、系统要求、按真实页面/流程逐章操作、常见问题、术语表。",
+    "manual_modules 按当前项目真实页面、导航入口、按钮、输入限制、系统反馈和截图位置编写，不写抽象功能名。",
+    "不要照抄范本文案；范本只说明手册需要具体可操作。",
+    "不要用关键词表决定行业和功能；必须能从项目证据或用户补充中解释来源。",
+    "application_purpose 和 main_functions 合计应满足500-1300字(2026新政)。"
+  ]
+}
