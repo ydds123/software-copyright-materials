@@ -125,6 +125,10 @@ def confirm_code_selection(workdir: Path, note: str) -> Path:
                 "HINT: 这些模块在操作手册中有功能描述但无对应代码材料，可能触发补正。"
             )
 
+    # Sync user_confirmed flag in selection JSON
+    data["user_confirmed"] = True
+    write_json(path, data)
+
     return write_gate(workdir, "code-selection", note)
 
 
@@ -196,6 +200,22 @@ def confirm_content_quality(workdir: Path, note: str) -> Path:
     return write_gate(workdir, "content-quality", note)
 
 
+def confirm_manual(workdir: Path, note: str) -> Path:
+    manual_path = workdir / "草稿/操作手册.md"
+    if not manual_path.exists():
+        raise SystemExit(
+            "STOP_FOR_USER\n"
+            "NEXT_ACTION: 操作手册草稿不存在，请先生成并完成内容质量检查。"
+        )
+    gates = load_gates(workdir)
+    if not gates.get("content-quality", {}).get("confirmed"):
+        raise SystemExit(
+            "STOP_FOR_USER\n"
+            "NEXT_ACTION: 操作手册确认前必须先通过 content-quality 门禁。"
+        )
+    return write_gate(workdir, "manual", note)
+
+
 def confirm_diagrams(workdir: Path, note: str) -> Path:
     """Verify that the 4 overview + module flow diagram PNGs exist in 截图/."""
     screenshot_dir = workdir / "截图"
@@ -236,13 +256,14 @@ def confirm_diagrams(workdir: Path, note: str) -> Path:
 
 def confirm_markdown(workdir: Path, note: str) -> Path:
     gates = load_gates(workdir)
-    gate_names = ["business", "code-selection", "screenshot-method", "application-fields", "diagrams"]
+    gate_names = ["business", "manual", "content-quality", "code-selection", "screenshot-method", "application-fields"]
     gate_labels = {
         "business": "业务理解尚未确认",
+        "manual": "操作手册尚未确认",
+        "content-quality": "操作手册内容质量尚未通过",
         "code-selection": "代码文件选择尚未确认",
         "screenshot-method": "截图方式尚未确认",
         "application-fields": "申请表字段尚未确认",
-        "diagrams": "技术图表尚未生成",
     }
     issues = [gate_labels[g] for g in gate_names if not gates.get(g, {}).get("confirmed")]
     pending = pending_application_fields(workdir / "草稿/申请表信息.md")
@@ -293,7 +314,7 @@ def main() -> None:
         choices=[
             "environment", "project", "business", "code-selection",
             "screenshot-method", "application-fields", "markdown",
-            "content-quality", "diagrams",
+            "content-quality", "manual", "diagrams",
         ],
     )
     parser.add_argument("--note", default="用户已确认")
@@ -307,6 +328,12 @@ def main() -> None:
     args = parser.parse_args()
 
     workdir = Path(args.workdir) if args.workdir else resolve_workdir(args.task_dir)
+
+    if not args.confirm:
+        raise SystemExit(
+            "STOP_FOR_USER\n"
+            f"NEXT_ACTION: 用户确认后，重新运行并添加 --confirm 记录 {args.stage} 门禁。"
+        )
 
     confirm_params({"工作目录": str(workdir), "门禁阶段": args.stage, "备注": args.note}, args.confirm)
     if args.stage == "environment":
@@ -323,6 +350,8 @@ def main() -> None:
         path = confirm_application_fields(workdir, args.note)
     elif args.stage == "content-quality":
         path = confirm_content_quality(workdir, args.note)
+    elif args.stage == "manual":
+        path = confirm_manual(workdir, args.note)
     elif args.stage == "diagrams":
         path = confirm_diagrams(workdir, args.note)
     else:

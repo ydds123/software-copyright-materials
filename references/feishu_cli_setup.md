@@ -41,7 +41,7 @@ python3 scripts/check_environment.py \
   --skip-feishu
 ```
 
-跳过后，技术图表降级为 Markdown 文本描述或其他经用户确认的方式。
+跳过后，不记录 `diagrams` 门禁，也不阻塞 Markdown 确认或正式资料生成；可按需保留 Markdown 文本描述。
 
 ## 常用调用
 

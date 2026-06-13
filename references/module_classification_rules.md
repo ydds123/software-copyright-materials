@@ -166,7 +166,7 @@
 - `operation_chain` 必须按用户操作的时间顺序排列，不准跳过中间阶段。
 - 有条件分支时必须在 `conditional_branches` 中说明两条路径的差异。
 - `entry_conditions` 必须真实反映代码中的依赖关系（如"巡检点必须已存在"）。
-- **每个 `sub_operation` 必须填写 `outcome` 和 `constraint`**。这两个字段直接渲染到操作手册的操作步骤表中（`outcome`→系统响应列、`constraint`→异常处理列）。缺失时渲染器输出 `[WARNING]` 占位符——操作手册质量自检会拦截，不能进入 markdown 确认门禁。
+- **每个 `sub_operation` 必须填写 `outcome` 和 `constraint`**。模型撰写操作步骤表时，分别将其用于系统响应列和异常处理列。字段缺失时，操作手册质量自检必须拦截，不能进入 markdown 确认门禁。
 
 **Android 端业务型模块的额外要求**：
 - 物理约束必须写明（NFC 感应、GPS 距离、扫码校验等）。
@@ -216,26 +216,26 @@
 
 ## 完整性自检
 
-模型填写完 `manual_modules` 后，必须输出 `草稿/模块完整性自检记录.json`，逐模块记录：
+模型填写完 `manual_modules` 后，必须把 `completeness_review` 写入对应模块对象。操作手册阶段会将其汇入 `草稿/操作手册写作计划.json`，不再单独创建模块完整性文件：
 
 ```json
 {
-  "module": "模块名称",
+  "title": "模块名称",
   "module_type": "registry|business|hybrid",
-  "source_file_lines": 1800,
-  "classification": "台账型|业务型|混合型",
-  "completeness": {
+  "completeness_review": {
+    "source_file_lines": 1800,
+    "classification": "台账型|业务型|混合型",
     "total_visible_elements_observed": 50,
     "total_steps_documented": 8,
     "has_conditional_branches": true,
     "branches_enumerated": 4,
     "all_columns_enumerated": true,
     "all_filters_enumerated": true,
-    "all_row_actions_enumerated": true
-  },
-  "issues": [
-    "条件分支数不足以覆盖代码中所有分支路径"
-  ]
+    "all_row_actions_enumerated": true,
+    "issues": [
+      "条件分支数不足以覆盖代码中所有分支路径"
+    ]
+  }
 }
 ```
 

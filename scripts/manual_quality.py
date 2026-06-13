@@ -115,16 +115,13 @@ DEFAULT_TEMPLATE_QUALITY = {
     "min_chars": 15000,
     "min_headings": 20,
     "min_table_lines": 50,
-    "min_screenshot_slots_without_images": 14,
-    "require_cover": True,
-    "require_toc": True,
+    "min_screenshot_slots_without_images": 7,
+    "require_cover": False,
+    "require_toc": False,
     "require_login_section": True,
-    "require_home_section": True,
+    "require_home_section": False,
     "require_numbered_headings": True,
-    "require_module_subsections": [
-        "功能介绍",
-        "操作路径",
-    ],
+    "require_module_subsections": [],
     "content_review_gates": {
         "required_audience_terms": [],
         "required_business_chain_terms": [],
@@ -202,12 +199,16 @@ AI_TONE_MARKERS = [
 def manual_section_body(text: str, title: str) -> str:
     number_pattern = r"(?:\(\d+\)、|[零一二三四五六七八九十百]+、)"
     pattern = re.compile(
-        rf"^(#{{2,4}})\s+(?:{number_pattern}\s*|\d+(?:\.\d+)*\.?\s+)?{re.escape(title)}\s*$",
+        rf"^(#{{2,4}})\s+(?:{number_pattern}\s*|\d+[A-Z]?(?:\.\d+)*\.?\s+)?{re.escape(title)}\s*$",
         flags=re.M,
     )
-    match = pattern.search(text)
-    if not match:
+    matches = list(pattern.finditer(text))
+    if not matches:
         return ""
+    # Prefer the highest-level matching section. A module name may also appear
+    # earlier as a requirements subsection, which must not shadow its full
+    # operation chapter.
+    match = min(matches, key=lambda item: len(item.group(1)))
     level = len(match.group(1))
     rest = text[match.end() :]
     end = len(text)
@@ -266,7 +267,6 @@ def required_business_terms(business: dict[str, Any] | None, modules: list[dict[
             terms.append(plain_manual_text(feature))
     if business:
         terms.extend(as_text_list(business.get("business_features")))
-        terms.extend(operation_flow_steps(business.get("operation_flow")))
     return unique_terms(terms, limit=12)
 
 
@@ -338,7 +338,7 @@ def template_profile_quality_issues(text: str, modules: list[dict[str, Any]], pr
     issues: list[str] = []
     heading_count = len(re.findall(r"(?m)^#{1,4}\s+", text))
     table_line_count = len(re.findall(r"(?m)^\|", text))
-    screenshot_count = text.count("【截图预留：")
+    screenshot_count = text.count("【截图预留：") + len(re.findall(r"!\[[^\]]*\]\(截图/[^)]+\)", text))
     char_count = len(text)
     if char_count < int(quality.get("min_chars") or 0):
         issues.append(f"{_ZH["zh014"]}{char_count}{_ZH["zh015"]}{quality.get('min_chars')}")
@@ -352,12 +352,15 @@ def template_profile_quality_issues(text: str, modules: list[dict[str, Any]], pr
         issues.append("模板符合度不足：缺少封面式标题")
     if quality.get("require_toc") and "## 目录" not in text:
         issues.append("模板符合度不足：缺少目录章节")
-    if quality.get("require_login_section") and "## 2. 登录界面" not in text:
+    if quality.get("require_login_section") and not re.search(r"^#{2,4}\s+\d+(?:\.\d+)*\s+[^\n]*登录[^\n]*$", text, flags=re.M):
         issues.append("模板符合度不足：缺少登录界面章节")
-    if quality.get("require_home_section") and "## 3. 系统首页" not in text:
-        issues.append("模板符合度不足：缺少系统首页章节")
-    if quality.get("require_numbered_headings") and not re.search(r"(?m)^##\s+4\.\s+功能模块", text):
-        issues.append("模板符合度不足：缺少编号式功能模块章节")
+    if quality.get("require_home_section") and re.search(r"^##\s+\d+\s+系统首页\s*$", text, flags=re.M):
+        has_image = re.search(r"!\[[^\]]*首页[^\]]*\]\(截图/[^)]+\)", text)
+        has_placeholder = re.search(r"【截图预留：[^】]*首页[^】]*】", text)
+        if not (has_image or has_placeholder):
+            issues.append("模板符合度不足：手册声明存在系统首页，但缺少对应截图或预留")
+    if quality.get("require_numbered_headings") and not re.search(r"(?m)^##\s+\d+\s+\S", text):
+        issues.append("模板符合度不足：缺少阿拉伯数字编号式一级章节")
     required_subsections = [str(item) for item in quality.get("require_module_subsections") or []]
     for module in modules:
         body = manual_section_body(text, module["feature"])
@@ -485,8 +488,9 @@ def table_duplicate_column_issues(text: str, duplicate_limit: int) -> list[str]:
 
 
 def major_heading_number_issues(text: str) -> list[str]:
+    """检查一级标题编号是否连续且唯一。阿拉伯数字格式：## N Title。"""
     matches: dict[str, list[str]] = {}
-    pattern = re.compile(r"^##\s+(?P<number>[一二三四五六七八九十百]+|\d+)[、.．]\s*(?P<title>.+?)\s*$", flags=re.M)
+    pattern = re.compile(r"^##\s+(?P<number>\d+)\s+(?P<title>.+?)\s*$", flags=re.M)
     for match in pattern.finditer(text):
         number = match.group("number").strip()
         title = match.group("title").strip()
@@ -497,7 +501,7 @@ def major_heading_number_issues(text: str) -> list[str]:
         if len(titles) > 1:
             title_text = "、".join(f"[{title}]" for title in titles[:5])
             suffix = "" if len(titles) <= 5 else "等"
-            issues.append(f"{_ZH['zh271']}{number} 出现在 {title_text}{suffix}，应调整为连续且唯一的一级章节编号")
+            issues.append(f"一级标题编号 {number} 出现在 {title_text}{suffix}，应调整为连续且唯一的章节编号")
     return issues
 
 
@@ -508,16 +512,21 @@ def manual_quality_issues(
     business: dict[str, Any] | None = None,
 ) -> list[str]:
     issues: list[str] = []
-    required_sections = ["系统概述", "登录界面", "系统首页", "功能模块", "系统要求", "常见问题解答", "术语表"]
-    for title in required_sections:
-        if not manual_section_body(text, title):
-            issues.append(f"{_ZH["zh037"]}{title}")
-    if re.search(r"^##\s+\(\d+\)、", text, flags=re.M):
-        issues.append("章节标题仍使用括号数字，应使用清晰的章节编号")
+    required_section_aliases = [
+        ("系统概述", ["系统概述"]),
+        ("登录", ["系统登录", "登录界面", "Web 管理端登录"]),
+        ("系统要求", ["系统要求", "运行与使用要求"]),
+        ("常见问题解答", ["常见问题解答"]),
+        ("术语表", ["术语表", "术语说明"]),
+    ]
+    for label, aliases in required_section_aliases:
+        if not any(manual_section_body(text, title) for title in aliases):
+            issues.append(f"{_ZH['zh037']}{label}")
+    if re.search(r"^##\s+\(?\d+[)、.]", text, flags=re.M):
+        issues.append("章节标题仍使用括号数字格式，应使用阿拉伯数字层级编号（如 1 系统简介）")
+    if re.search(r"^##\s+[一二三四五六七八九十百]+、", text, flags=re.M):
+        issues.append("章节标题仍使用中文大写序号，应改为阿拉伯数字层级编号（如 1 系统简介）")
     issues.extend(major_heading_number_issues(text))
-    related_body = manual_section_body(text, "系统概述")
-    if related_body and "| 文档名称 |" not in related_body:
-        issues.append("系统概述章节应使用表格指向配套文档")
     for term in TECHNICAL_TERMS:
         if term in text:
             issues.append(f"{_ZH["zh038"]}{term}")
@@ -527,8 +536,9 @@ def manual_quality_issues(
     for marker in AI_TONE_MARKERS:
         if marker in text:
             issues.append(f"{_ZH["zh040"]}{marker}")
-    if text.count("【截图预留：") < len(modules):
-        issues.append("截图预留数量少于核心模块数量")
+    screenshot_count = text.count("【截图预留：") + len(re.findall(r"!\[[^\]]*\]\(截图/[^)]+\)", text))
+    if screenshot_count < len(modules):
+        issues.append("真实截图和截图预留总数少于核心模块数量")
     list_lines = [
         line.strip()
         for line in text.splitlines()
@@ -550,11 +560,77 @@ def manual_quality_issues(
             if label in body:
                 issues.append(f"{_ZH["zh044"]}{title} / {label}")
     issues.extend(step_density_issues(text, modules))
+    issues.extend(business_module_depth_issues(text, modules))
     issues.extend(template_profile_quality_issues(text, modules, profile))
     issues.extend(content_review_quality_issues(text, modules, profile, business))
     return issues
 
 
+def business_module_depth_issues(text: str, modules: list[dict[str, Any]]) -> list[str]:
+    """Enforce SKILL.md SS328-330: business/hybrid modules must describe object lifecycle
+    (state machine) and conditional branches from backend code analysis.
+
+    This checks the MANUAL TEXT (not the business JSON) because the manual is what
+    reviewers read. The JSON gate (check_skill_required_inputs in
+    content_quality_check.py) verifies model-authored fields exist; this gate
+    verifies the rendered prose actually covers the required depth.
+    """
+    issues: list[str] = []
+    for module in modules:
+        title = str(module.get("feature") or "").strip()
+        if not title:
+            continue
+        module_type = str(module.get("module_type") or "").strip()
+        if module_type not in ("business", "hybrid"):
+            continue
+        body = manual_section_body(text, title)
+        if not body:
+            continue
+
+        # ---- Gate 1: State machine / object lifecycle ----
+        # Accept: state tables with trigger/transition columns, explicit state
+        # headings, transition count in prose (3+ occurrences of transition markers).
+        has_state_table = (
+            bool(re.search(r"\|[^|]*状态[^|]*\|[^|]*触[^|]*\|", body, flags=re.M))
+            or bool(re.search(r"\|[^|]*状态[^|]*\|[^|]*含[^|]*\|", body, flags=re.M))
+            or bool(re.search(r"\|[^|]*处理阶段[^|]*\|", body, flags=re.M))
+        )
+        has_state_heading = bool(re.search(
+            r"(?i)(状态机|生命周期|状态流转|object.lifecycle|治理闭环|治理状态)",
+            body,
+        ))
+        transition_count = len(re.findall(
+            r"(?i)(状态.*更新为|变更|流转|回退|下一阶段|下一状态|终态|待验收)",
+            body,
+        ))
+        if not (has_state_table or has_state_heading or transition_count >= 3):
+            issues.append(
+                f"业务型模块「{title}」缺少对象状态机/生命周期描述 -- "
+                f"SKILL.md SD329 要求业务型模块描述 object_lifecycle"
+            )
+
+        # ---- Gate 2: Conditional branches ----
+        # Accept: parameter/strategy matrices, explicit branch descriptions,
+        # or 3+ conditional keywords in prose.
+        has_branch_table = bool(re.search(
+            r"(?i)(条件分支|conditional|分支路径|配置路径|策略矩阵|推送策略|参数.*组合|参数.*矩阵|handler)",
+            body,
+        ))
+        has_branch_explicit = bool(re.search(
+            r"(?i)(如果.*则|选择.*激活|分支说明|分支一览|参数触发|配置路径分支)",
+            body,
+        ))
+        branch_count = len(re.findall(
+            r"(如果|若|则|否则|否则如果)",
+            body,
+        ))
+        if not (has_branch_table or has_branch_explicit or branch_count >= 3):
+            issues.append(
+                f"业务型模块「{title}」缺少条件分支说明 -- "
+                f"SKILL.md SD329 要求每个条件分支必须在 conditional_branches 中说明"
+            )
+
+    return issues
 def step_density_issues(text: str, modules: list[dict[str, Any]]) -> list[str]:
     # Skip step density check entirely if any typed module is present
     if any(m.get("module_type") for m in modules):

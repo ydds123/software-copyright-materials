@@ -306,6 +306,52 @@ def normalize_model_context(model: dict[str, Any], evidence: dict[str, Any], web
     else:
         se = ["web"]  # default: single-endpoint web system
 
+    # ── product composition and closed-loop validation ──
+    product_composition = model.get("product_composition")
+    _check(
+        isinstance(product_composition, list) and len(product_composition or []) > 0,
+        "product_composition 必须是非空列表",
+    )
+    if isinstance(product_composition, list):
+        for index, item in enumerate(product_composition, start=1):
+            label = f"product_composition[{index}]"
+            _check(isinstance(item, dict), f"{label} 必须是对象")
+            if not isinstance(item, dict):
+                continue
+            for field in ("endpoint", "audience", "repository"):
+                _check(bool(item.get(field)), f"{label} 缺少字段: {field}")
+            _check(
+                isinstance(item.get("module_paths"), list) and len(item.get("module_paths") or []) > 0,
+                f"{label}.module_paths 必须是非空列表",
+            )
+
+    closed_loop = model.get("closed_loop_validation")
+    _check(isinstance(closed_loop, dict), "closed_loop_validation 必须是对象")
+    if isinstance(closed_loop, dict):
+        _check(
+            isinstance(closed_loop.get("chain"), list) and len(closed_loop.get("chain") or []) > 0,
+            "closed_loop_validation.chain 必须是非空列表",
+        )
+        _check(
+            isinstance(closed_loop.get("node_mapping"), list) and len(closed_loop.get("node_mapping") or []) > 0,
+            "closed_loop_validation.node_mapping 必须是非空列表",
+        )
+        _check(bool(str(closed_loop.get("conclusion") or "").strip()), "closed_loop_validation.conclusion 不能为空")
+        mappings = closed_loop.get("node_mapping") if isinstance(closed_loop.get("node_mapping"), list) else []
+        mapped_nodes: set[str] = set()
+        for index, item in enumerate(mappings, start=1):
+            label = f"closed_loop_validation.node_mapping[{index}]"
+            _check(isinstance(item, dict), f"{label} 必须是对象")
+            if not isinstance(item, dict):
+                continue
+            for field in ("node", "module", "role", "result"):
+                _check(bool(str(item.get(field) or "").strip()), f"{label} 缺少字段: {field}")
+            mapped_nodes.add(str(item.get("node") or "").strip())
+        chain_nodes = {str(node).strip() for node in closed_loop.get("chain") or [] if str(node).strip()}
+        missing_nodes = sorted(chain_nodes - mapped_nodes)
+        if missing_nodes:
+            errors.append("closed_loop_validation.node_mapping 缺少链路节点：" + "、".join(missing_nodes))
+
     # ── Report all errors at once ──
     if errors:
         numbered = "\n".join(f"  {i}. {e}" for i, e in enumerate(errors, start=1))
@@ -328,6 +374,8 @@ def normalize_model_context(model: dict[str, Any], evidence: dict[str, Any], web
         "industry": required_text(model, "industry"),
         "target_users": required_list(model.get("target_users"), "target_users"),
         "system_endpoints": se,
+        "product_composition": product_composition,
+        "closed_loop_validation": closed_loop,
         "core_value": required_text(model, "core_value"),
         "business_features": features_clean,
         "business_feature_details": {feature: str(details.get(feature)).strip() for feature in features_clean} if isinstance(details, dict) else {},
@@ -347,7 +395,7 @@ def normalize_model_context(model: dict[str, Any], evidence: dict[str, Any], web
         "confirmation_required": True,
         "user_confirmed": False,
         "confirmation_stage": "business",
-        "next_action": "请确认 草稿/业务理解.md 中的软件用途、行业、目标用户、核心功能、手册结构和申请口径；确认后运行 confirm_stage.py --stage business。",
+        "next_action": "请确认 草稿/业务理解.md 中的软件用途、行业、目标用户、核心功能、手册结构和申请口径；确认后运行 confirm_stage.py --stage business --confirm。",
         "review_notes": [
             "请确认模型判断的行业领域、目标用户和主要功能是否符合实际申报口径。",
             "请确认操作手册结构是否按真实页面和流程展开，而不是套用抽象功能列表。",
@@ -366,9 +414,41 @@ def write_context_md(path: Path, context: dict[str, Any]) -> None:
         f"- 核心价值：{context['core_value']}",
         f"- 证据文件：`{context['project_evidence_file']}`",
         "",
-        "## 目标用户",
+        "## 产品组成与闭环验证",
+        "",
+        "### 产品组成",
         "",
     ]
+    for item in context["product_composition"]:
+        module_paths = "、".join(str(path) for path in item.get("module_paths") or [])
+        lines.append(
+            f"- {item.get('endpoint', '')}：面向{item.get('audience', '')}；"
+            f"仓库 `{item.get('repository', '')}`；模块目录：{module_paths}"
+        )
+    closed_loop = context["closed_loop_validation"]
+    lines.extend(
+        [
+            "",
+            "### 闭环验证",
+            "",
+            " → ".join(str(node) for node in closed_loop.get("chain") or []),
+            "",
+        ]
+    )
+    for item in closed_loop.get("node_mapping") or []:
+        lines.append(
+            f"- {item.get('node', '')}：对应模块 {item.get('module', '')}；"
+            f"操作者 {item.get('role', '')}；结果 {item.get('result', '')}"
+        )
+    lines.extend(
+        [
+            "",
+            f"- 验证结论：{closed_loop.get('conclusion', '')}",
+            "",
+        "## 目标用户",
+        "",
+        ]
+    )
     lines.extend(f"- {item}" for item in context["target_users"])
     lines.extend(["", "## 主要业务功能", ""])
     lines.extend(f"- {item}" for item in context["business_features"])
@@ -444,7 +524,8 @@ def main() -> None:
     parser.add_argument("--out-dir", help="Draft output dir; auto-derived from --task-dir if omitted")
     parser.add_argument("--task-dir", help="Task root dir; auto-resolved from current directory if omitted")
     parser.add_argument("--web-notes", help="Optional plain-text notes from external/competitor research")
-    parser.add_argument("--model-context", help="Model-authored business context JSON")
+    parser.add_argument("--model-context", help="Model-authored business context JSON (skip if using --from-json)")
+    parser.add_argument("--from-json", help="Path to existing 业务理解.json to re-render 业务理解.md from")
     parser.add_argument("--confirm", action="store_true", help="Confirmed by user, proceed with execution")
     args = parser.parse_args()
 
@@ -467,9 +548,19 @@ def main() -> None:
     write_json(out_dir / "业务理解证据.json", evidence)
     write_evidence_md(out_dir / "业务理解证据.md", evidence)
 
-    if not args.model_context:
+    if not args.model_context and not args.from_json:
         print(f"OK business evidence: {out_dir / '业务理解证据.md'}")
         print("NEXT_ACTION: 模型需要阅读业务理解证据和项目源码，以 references/业务理解模型稿模板.json 为骨架，自行编写业务理解模型稿 JSON，然后用 --model-context 生成业务理解.md/json。")
+        return
+
+    if args.from_json:
+        context = read_json(Path(args.from_json))
+        write_json(out_dir / "业务理解.json", context)
+        write_context_md(out_dir / "业务理解.md", context)
+        print(f"OK business context (from JSON): {out_dir / '业务理解.md'}")
+        print(f"Features: {len(context.get('business_features', []))}")
+        print("STOP_FOR_USER")
+        print(f"NEXT_ACTION: {context.get('next_action', '请确认业务理解')}")
         return
 
     model = load_model_context(Path(args.model_context))

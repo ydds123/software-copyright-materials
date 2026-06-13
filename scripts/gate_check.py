@@ -7,21 +7,19 @@ from pathlib import Path
 
 GATE_CHAIN: dict[str, list[str]] = {
     "project":            [],
-    "business":           ["project"],
-    "application-fields": ["business"],
+    "business":           [],
+    "application-fields": ["code-selection"],
     "manual-draft":       ["business"],
-    "code-selection":     ["business", "content-quality"],
-    "extract-code":       ["code-selection", "content-quality"],
+    "content-quality":    ["business"],
+    "manual":             ["content-quality"],
+    "code-selection":     ["manual"],
+    "extract-code":       ["code-selection"],
     "application-info":   ["code-selection"],
-    "screenshot-method":  ["business"],
-    "diagrams":           ["code-selection"],
-    "markdown":           ["application-fields", "code-selection", "screenshot-method", "diagrams"],
+    "screenshot-method":  ["manual"],
+    "diagrams":           ["manual"],
+    "markdown":           ["application-fields", "code-selection", "screenshot-method", "content-quality", "manual"],
     "build-final":        ["markdown"],
-    "content-quality":    ["manual-draft"],
 }
-
-# markdown 门禁的前置条件包括 content-quality——质量检查必须先过
-GATE_CHAIN["markdown"].append("content-quality")
 
 
 def resolve_workdir(start: Path | None = None) -> Path | None:

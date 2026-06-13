@@ -191,8 +191,28 @@ def normalize_manual_modules(
                 "补充用户在什么场景下会使用该页面、处理什么具体事务，再生成操作手册。"
             )
         evidence = required_module_list(item, "evidence", title)
-        visible_elements = required_module_list(item, "visible_elements", title)
         module_type = item.get("module_type", "")
+
+        visible_elements = as_text_list(item.get("visible_elements"))
+        if not visible_elements and module_type in ("registry", "business", "hybrid"):
+            registry = item.get("registry") if isinstance(item.get("registry"), dict) else {}
+            lst = registry.get("list") if isinstance(registry.get("list"), dict) else {}
+            for field in ("columns", "filters", "top_actions", "row_actions"):
+                visible_elements.extend(as_text_list(lst.get(field)))
+            create = registry.get("create") if isinstance(registry.get("create"), dict) else {}
+            for section in create.get("form_sections") or []:
+                if isinstance(section, dict):
+                    visible_elements.extend(as_text_list(section.get("fields")))
+            operation = item.get("business_operation") if isinstance(item.get("business_operation"), dict) else {}
+            for phase in operation.get("operation_chain") or []:
+                if not isinstance(phase, dict):
+                    continue
+                for sub_operation in phase.get("sub_operations") or []:
+                    if isinstance(sub_operation, dict):
+                        visible_elements.extend(as_text_list(sub_operation.get("visible_controls")))
+        visible_elements = list(dict.fromkeys(value for value in visible_elements if value))
+        if not visible_elements:
+            visible_elements = required_module_list(item, "visible_elements", title)
 
         # For registry/business/hybrid: derive steps from rich structure if operation_steps not explicitly provided
         if module_type in ("registry", "business", "hybrid"):
@@ -216,9 +236,45 @@ def normalize_manual_modules(
                 steps = [f"{_ZH["zh056"]}{title}{_ZH["zh063"]}", f"{_ZH["zh064"]}{title}{_ZH["zh065"]}"]
 
             feedback = as_text_list(item.get("feedback"))
+            validation_rules = as_text_list(item.get("validation_rules"))
+            registry = item.get("registry") if isinstance(item.get("registry"), dict) else {}
+            create = registry.get("create") if isinstance(registry.get("create"), dict) else {}
+            validation_rules.extend(as_text_list(create.get("rules")))
+            for section in create.get("form_sections") or []:
+                if isinstance(section, dict):
+                    validation_rules.extend(as_text_list(section.get("rules")))
+            operation = item.get("business_operation") if isinstance(item.get("business_operation"), dict) else {}
+            for phase in operation.get("operation_chain") or []:
+                if not isinstance(phase, dict):
+                    continue
+                for sub_operation in phase.get("sub_operations") or []:
+                    if not isinstance(sub_operation, dict):
+                        continue
+                    constraint = plain_manual_text(str(sub_operation.get("constraint") or "")).strip()
+                    outcome = plain_manual_text(str(sub_operation.get("outcome") or "")).strip()
+                    if constraint:
+                        validation_rules.append(constraint)
+                    if outcome:
+                        feedback.append(outcome)
+            scenarios = item.get("crud_scenarios") if isinstance(item.get("crud_scenarios"), dict) else {}
+            for scenario in scenarios.values():
+                if not isinstance(scenario, dict):
+                    continue
+                for scenario_step in scenario.get("steps") or []:
+                    if not isinstance(scenario_step, dict):
+                        continue
+                    response = plain_manual_text(str(scenario_step.get("system_response") or "")).strip()
+                    handling = plain_manual_text(str(scenario_step.get("error_handling") or "")).strip()
+                    if response:
+                        feedback.append(response)
+                    if handling:
+                        validation_rules.append(handling)
+            validation_rules = list(dict.fromkeys(value for value in validation_rules if value))
+            feedback = list(dict.fromkeys(value for value in feedback if value))
+            if not validation_rules:
+                validation_rules = required_module_list(item, "validation_rules", title)
             if not feedback:
-                feedback = ["操作完成后页面自动刷新并显示更新结果"] if module_type == "registry" else ["操作完成后系统更新状态并返回列表"]
-            validation_rules = required_module_list(item, "validation_rules", title)
+                feedback = required_module_list(item, "feedback", title)
         else:
             steps = required_module_list(item, "operation_steps", title)
             validation_rules = required_module_list(item, "validation_rules", title)

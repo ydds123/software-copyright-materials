@@ -218,7 +218,6 @@ def check_environment(skill_dir: Path, feishu_doc: str = "", skip_feishu: bool =
         "output_directory": "项目目录/<年份>年软件著作权申请资料/<软件名称>/",
         "capabilities": {
             "markdown_drafts": True,
-            "application_txt": True,
             "basic_docx": python_docx or True,
             "python_docx": python_docx,
             "pandoc_preview": pandoc_ok,
@@ -250,7 +249,7 @@ def check_environment(skill_dir: Path, feishu_doc: str = "", skip_feishu: bool =
             else "完整 DOCX OpenXML 环境未就绪。可以继续使用兜底 DOCX 生成；如需更规范的 Word 结构和校验，请先安装 .NET SDK 并运行 vendor/docx-toolkit/scripts/setup.sh。"
         ),
         "install_prompt": (
-            "是否安装完整 DOCX 环境？安装后文档生成和校验更规范；不安装也可以继续生成 Markdown、TXT 和基础 DOCX。"
+            "是否安装完整 DOCX 环境？安装后文档生成和校验更规范；不安装也可以继续生成 Markdown 和基础 DOCX。"
             if not docx_ready
             else "无需安装，完整环境可用。"
         ),
@@ -273,7 +272,6 @@ def write_markdown(path: Path, data: dict[str, Any]) -> None:
         "## 能力状态",
         "",
         f"- Markdown 草稿：{'可用' if caps['markdown_drafts'] else '不可用'}",
-        f"- 申请表 TXT：{'可用' if caps['application_txt'] else '不可用'}",
         f"- 基础 DOCX 生成：{'可用' if caps['basic_docx'] else '不可用'}",
         f"- python-docx：{'可用' if caps['python_docx'] else '不可用'}",
         f"- pandoc 预览：{'可用' if caps['pandoc_preview'] else '不可用'}（{data['versions']['pandoc']}）",

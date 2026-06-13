@@ -19,14 +19,22 @@ MAX_MAIN_FUNCTION_CHARS = 1300
 
 
 FIELD_ORDER = [
+    # 软件申请信息
     "软件全称",
+    "软件简称",
     "版本号",
     "著作权人",
+    "著作权人类型",
+    "权利范围",
+
+    # 软件开发信息
+    "软件分类",
+    "软件说明",
+    "开发方式",
     "开发完成日期",
     "首次发表日期",
-    "权利取得方式",
-    "权利范围",
-    "开发情况说明",
+
+    # 软件功能与特点
     "开发的硬件环境",
     "运行的硬件环境",
     "开发该软件的操作系统",
@@ -38,10 +46,28 @@ FIELD_ORDER = [
     "开发目的",
     "面向领域 / 行业",
     "软件的主要功能",
-    "技术特点",
-    "软件的技术特点选项",
+    "软件的技术特点",
+
+    # 2026 新政附加
     "页数",
-    "软件分类",
+    "AI 开发限制声明",
+    "经办人姓名",
+    "经办人身份证号码",
+    "经办人职务",
+]
+
+PROGRAMMING_LANGUAGES = [
+    "Assembly language", "Java", "Python", "JavaScript", "R", "C#", "MATLAB", "Ruby",
+    "C++", "Objective-C", "SQL", "Delphi/Object Pascal", "PHP", "Swift", "Go",
+    "PL/SQL", "Visual Basic", "HTML", "Perl", "Visual Basic.Net", "其他",
+]
+
+SOFTWARE_CATEGORIES = ["应用软件", "嵌入式软件", "中间件", "操作系统"]
+
+TECHNICAL_FEATURES = [
+    "APP", "信息安全软件", "游戏软件", "大数据软件", "教育软件", "人工智能软件",
+    "金融软件", "VR软件", "医疗软件", "5G软件", "地理信息软件", "小程序",
+    "云计算软件", "物联网软件", "智慧城市软件", "其他",
 ]
 
 
@@ -172,14 +198,22 @@ def build_fields(
     software_name_hint = f"待用户确认（建议：{software_name}；请确认最终软件全称）"
 
     defaults = {
+        # 软件申请信息
         "软件全称": software_name_hint,
+        "软件简称": "（无）",
         "版本号": version_hint,
         "著作权人": "待用户确认",
-        "开发完成日期": "待用户确认",
-        "首次发表日期": "待用户确认",
-        "权利取得方式": (business.get("rights_acquisition") or "原始取得") if business else "原始取得",
+        "著作权人类型": "企业法人",
         "权利范围": (business.get("rights_scope") or "全部权利") if business else "全部权利",
-        "开发情况说明": (business.get("development_situation") or "独立开发") if business else "独立开发",
+
+        # 软件开发信息
+        "软件分类": (business.get("software_category") or "应用软件") if business else "应用软件",
+        "软件说明": (business.get("software_description") or "原创") if business else "原创",
+        "开发方式": (business.get("development_method") or "单独开发") if business else "单独开发",
+        "开发完成日期": "待用户确认",
+        "首次发表日期": "未发表（首次发表）",
+
+        # 软件功能与特点
         "开发的硬件环境": hardware_hint,
         "运行的硬件环境": hardware_hint,
         "开发该软件的操作系统": dev_os_hint,
@@ -187,14 +221,17 @@ def build_fields(
         "该软件的运行平台 / 操作系统": infer_runtime_os(analysis),
         "软件运行支撑环境 / 支持软件": infer_runtime_support(analysis, project),
         "编程语言": language,
-        "源程序量": str(manifest.get("source_line_count") or manifest.get("selected_source_line_count") or "待用户确认"),
+        "源程序量": format_source_lines(analysis, manifest),
         "开发目的": (business.get("application_purpose") or f"建设{software_name}，为用户提供稳定、便捷的信息化操作能力，提升相关业务处理效率。") if business else f"建设{software_name}，为用户提供稳定、便捷的信息化操作能力，提升相关业务处理效率。",
         "面向领域 / 行业": (business.get("industry") or "待用户确认") if business else "待用户确认",
         "软件的主要功能": (business.get("main_functions") or summarize_features(analysis, software_name, business)) if business else summarize_features(analysis, software_name, business),
-        "技术特点": (business.get("technical_characteristics") or f"系统采用{framework_text}构建前端界面，结合模块化组件、路由组织、接口封装和状态管理实现业务功能，具备较好的可维护性和扩展性。") if business else f"系统采用{framework_text}构建前端界面，结合模块化组件、路由组织、接口封装和状态管理实现业务功能，具备较好的可维护性和扩展性。",
-        "软件的技术特点选项": (business.get("software_technical_option") or "原创") if business else "原创",
+        "软件的技术特点": (business.get("technical_characteristics") or f"系统采用{framework_text}构建前端界面，结合模块化组件、路由组织、接口封装和状态管理实现业务功能，具备较好的可维护性和扩展性。") if business else f"系统采用{framework_text}构建前端界面，结合模块化组件、路由组织、接口封装和状态管理实现业务功能，具备较好的可维护性和扩展性。",
+        # 2026 新政附加
         "页数": str(manifest.get("total_pages") or "待用户确认"),
-        "软件分类": (business.get("software_category") or "应用软件") if business else "应用软件",
+        "AI 开发限制声明": "待用户确认（需手抄：未使用 AI 开发编写代码、撰写文档或生成登记申请材料）",
+        "经办人姓名": "待用户确认",
+        "经办人身份证号码": "待用户确认",
+        "经办人职务": "待用户确认",
     }
     defaults.update({k: v for k, v in answers.items() if v})
     return defaults
@@ -224,6 +261,28 @@ def project_version_candidate(analysis: dict[str, Any]) -> str:
     if value and value.upper() != "V1.0":
         return normalize_version_label(value)
     return ""
+
+
+def format_source_lines(analysis: dict[str, Any], manifest: dict[str, Any]) -> str:
+    """Estimate total source lines from project analysis, NOT from selected code pages.
+
+    Priority:
+    1. analysis.source.total_line_count (full project scan, excludes node_modules etc.)
+    2. Fall back to manifest only if analysis is unavailable.
+    """
+    src = analysis.get("source") or {}
+    total = src.get("total_line_count") or src.get("line_count")
+    if total:
+        # Round to nearest 10,000 for readability
+        rounded = round(int(total) / 10000) * 10000
+        if rounded == 0:
+            rounded = int(total)
+        return f"约 {rounded:,} 行"
+    # Fallback: selected code pages only
+    sel = manifest.get("selected_source_line_count") or manifest.get("source_line_count")
+    if sel:
+        return f"约 {int(sel):,} 行（仅代码材料页面）"
+    return "待用户确认"
 
 
 def version_confirmation_hint(analysis: dict[str, Any], requested_version: str) -> str:
@@ -426,9 +485,29 @@ def infer_runtime_support(analysis: dict[str, Any], project: Path) -> str:
 
 def write_application_md(path: Path, fields: dict[str, str], analysis: dict[str, Any], manifest: dict[str, Any], business: dict[str, Any] | None = None) -> None:
     lines = ["# 申请表信息", ""]
-    for field in FIELD_ORDER:
-        lines.append(f"➤{field}：{fields.get(field, '待用户确认')}")
-    pending = [field for field in FIELD_ORDER if "待用户确认" in (fields.get(field) or "")]
+
+    # Section headers and their field ranges
+    sections = [
+        ("## 软件申请信息", ["软件全称", "软件简称", "版本号", "著作权人", "著作权人类型", "权利范围"]),
+        ("## 软件开发信息", ["软件分类", "软件说明", "开发方式", "开发完成日期", "首次发表日期"]),
+        ("## 软件功能与特点", [
+            "开发的硬件环境", "运行的硬件环境", "开发该软件的操作系统",
+            "软件开发环境 / 开发工具", "该软件的运行平台 / 操作系统",
+            "软件运行支撑环境 / 支持软件", "编程语言", "源程序量", "开发目的",
+            "面向领域 / 行业", "软件的主要功能", "软件的技术特点",
+        ]),
+        ("## 附加信息（2026 新政）", ["页数", "AI 开发限制声明", "经办人姓名", "经办人身份证号码", "经办人职务"]),
+    ]
+
+    for section_title, section_fields in sections:
+        lines.append(section_title)
+        lines.append("")
+        for field in section_fields:
+            if field in FIELD_ORDER:  # only output if field is declared
+                lines.append(f"➤{field}：{fields.get(field, '待用户确认')}")
+        lines.append("")
+
+    pending = [field for field in FIELD_ORDER if "待用户确认" in (fields.get(field) or "") and "首次发表日期" not in field]
 
     # Build warnings for common issues
     warnings: list[str] = []
@@ -451,6 +530,25 @@ def write_application_md(path: Path, fields: dict[str, str], analysis: dict[str,
             warnings.append(f"软件的主要功能仅有 {func_len} 字符，应不少于 {MIN_MAIN_FUNCTION_CHARS} 字符。请扩写功能说明。")
         elif func_len > MAX_MAIN_FUNCTION_CHARS:
             warnings.append(f"软件的主要功能共 {func_len} 字符，超过建议上限 {MAX_MAIN_FUNCTION_CHARS} 字符。请精简。")
+
+    # 字段字数限制检查
+    INPUT_50_FIELDS = [
+        "开发的硬件环境", "运行的硬件环境", "开发该软件的操作系统",
+        "软件开发环境 / 开发工具", "该软件的运行平台 / 操作系统",
+        "软件运行支撑环境 / 支持软件", "开发目的", "面向领域 / 行业",
+    ]
+    for fld in INPUT_50_FIELDS:
+        val = fields.get(fld, "")
+        if val and "待用户确认" not in val:
+            n = len(str(val).replace(" ", "").replace("\n", ""))
+            if n > 50:
+                warnings.append(f"[字数超限]「{fld}」共 {n} 字（上限 50 字），请精简。")
+
+    lang_val = fields.get("编程语言", "")
+    if lang_val and "待用户确认" not in lang_val:
+        n = len(str(lang_val).replace(" ", "").replace("\n", ""))
+        if n > 120:
+            warnings.append(f"[字数超限]「编程语言」共 {n} 字（上限 120 字），请精简。")
 
     lines.extend(
         [
@@ -493,7 +591,7 @@ def write_application_md(path: Path, fields: dict[str, str], analysis: dict[str,
             "",
             "```text",
             "STOP_FOR_USER",
-            "NEXT_ACTION: 请补全并确认申请表字段；确认后运行 confirm_stage.py --stage application-fields。",
+            "NEXT_ACTION: 请补全并确认申请表字段；确认后运行 confirm_stage.py --stage application-fields --confirm。",
             "```",
         ]
     )
@@ -549,7 +647,7 @@ def main() -> None:
     write_application_md(out_path, fields, analysis, manifest, business)
     print(f"OK application draft: {out_path}")
     print("STOP_FOR_USER")
-    print("NEXT_ACTION: 请补全并确认申请表字段；确认后运行 confirm_stage.py --stage application-fields。")
+    print("NEXT_ACTION: 请补全并确认申请表字段；确认后运行 confirm_stage.py --stage application-fields --confirm。")
 
 
 if __name__ == "__main__":

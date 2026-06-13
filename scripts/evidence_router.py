@@ -276,7 +276,7 @@ def _evidence_gap_report(module: dict[str, Any], feature: str) -> str:
         "",
         f"> **NEXT_ACTION**: 读取上述证据文件，将提取的信息填入 `业务理解.json`",
         f"> → `manual_modules` → `{feature}` 的对应字段后，",
-        "> 重新运行 `generate_manual_draft.py` 渲染。",
+        "> 修正操作手册正文后，重新运行 `generate_manual_draft.py` 验证。",
         "",
     ])
 

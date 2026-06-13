@@ -14,6 +14,24 @@ from extract_code_material import LINES_PER_PAGE, SPLIT_THRESHOLD_PAGES, categor
 DEFAULT_MAX_FILES = 0
 
 
+def require_confirmed_manual(out_dir: Path) -> None:
+    for anchor in [out_dir, *out_dir.parents]:
+        gate_path = anchor / "门禁状态.json"
+        if not gate_path.exists():
+            continue
+        gates = read_json(gate_path)
+        if gates.get("manual", {}).get("confirmed"):
+            return
+        raise SystemExit(
+            "STOP_FOR_USER\n"
+            "NEXT_ACTION: 代码选择前必须先确认完整操作手册并记录 manual 门禁。"
+        )
+    raise SystemExit(
+        "STOP_FOR_USER\n"
+        "NEXT_ACTION: 找不到门禁状态文件。代码选择前必须先确认完整操作手册并记录 manual 门禁。"
+    )
+
+
 def evidence_for(path: Path, project: Path) -> str:
     priority, _ = category_weight(path, project)
     if priority == 0:
@@ -57,14 +75,25 @@ def extract_module_evidence(business: dict[str, Any] | None) -> dict[str, list[s
 def compute_module_coverage(
     candidates: list[dict[str, Any]],
     evidence_map: dict[str, list[str]],
+    project_root: str | None = None,
 ) -> dict[str, Any]:
     """Cross-reference manual module evidence files with candidate files."""
     all_candidate_paths = {c["path"].replace("\\", "/") for c in candidates}
 
+    # Normalize evidence paths: strip absolute project-root prefix and backslash
+    def _norm(p: str) -> str:
+        path = p.replace("\\", "/")
+        if project_root:
+            prefix = project_root.replace("\\", "/").rstrip("/") + "/"
+            if path.lower().startswith(prefix.lower()):
+                path = path[len(prefix):]
+        return path
+
     module_coverage: list[dict[str, Any]] = []
     for module_title, evidence_paths in evidence_map.items():
-        found = [p for p in evidence_paths if p.replace("\\", "/") in all_candidate_paths]
-        missing = [p for p in evidence_paths if p.replace("\\", "/") not in all_candidate_paths]
+        normalized = [_norm(p) for p in evidence_paths]
+        found = [p for p in normalized if p in all_candidate_paths]
+        missing = [p for p in normalized if p not in all_candidate_paths]
         module_coverage.append({
             "module_title": module_title,
             "evidence_files_found": found,
@@ -151,7 +180,7 @@ def write_selection_md(path: Path, data: dict[str, Any]) -> None:
         "",
         "```text",
         "STOP_FOR_USER",
-        "NEXT_ACTION: 请由模型先填写 草稿/代码文件选择.json 的抽取选择和选择理由，再让用户确认；确认后运行 confirm_stage.py --stage code-selection。",
+        "NEXT_ACTION: 请由模型先填写 草稿/代码文件选择.json 的抽取选择和选择理由，再让用户确认；确认后运行 confirm_stage.py --stage code-selection --confirm。",
         "```",
         "",
         "确认方式：",
@@ -221,6 +250,7 @@ def main() -> None:
 
     out_dir = Path(args.out_dir) if args.out_dir else resolve_draft_dir(args.task_dir)
     ensure_dir(out_dir)
+    require_confirmed_manual(out_dir)
     candidates = build_candidates(project)
     target_lines = max(1, args.target_pages) * max(1, args.lines_per_page)
     if args.max_files:
@@ -238,7 +268,7 @@ def main() -> None:
             if isinstance(business, dict):
                 evidence_map = extract_module_evidence(business)
                 if evidence_map:
-                    coverage = compute_module_coverage(candidates, evidence_map)
+                    coverage = compute_module_coverage(candidates, evidence_map, args.project)
 
     supplement_rule = (
         "模型优先选择 manual_modules 中 evidence 列出的源码文件，确保操作手册中每个功能模块都有对应代码覆盖；"
@@ -246,7 +276,7 @@ def main() -> None:
     )
     next_action = (
         "模型必须优先选择 代码文件候选清单.md 中「模块代码覆盖」章节列出的 evidence 文件；"
-        "补充文件须在 model_reason 中标注为补充。填写完成后让用户确认，再运行 confirm_stage.py --stage code-selection。"
+        "补充文件须在 model_reason 中标注为补充。填写完成后让用户确认，再运行 confirm_stage.py --stage code-selection --confirm。"
     )
     data = {
         "project_root": str(project.resolve()),

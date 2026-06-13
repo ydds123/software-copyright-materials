@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build final DOCX/TXT files from confirmed Markdown drafts."""
+"""Build final application information and DOCX materials from confirmed drafts."""
 
 from __future__ import annotations
 
@@ -133,13 +133,50 @@ def application_software_name(draft_dir: Path) -> str:
     return name
 
 
-def write_application_txt(draft_dir: Path, out_dir: Path) -> tuple[Path | None, list[str]]:
+def write_application_md(draft_dir: Path, out_dir: Path) -> tuple[Path | None, list[str]]:
     md_path = draft_dir / "申请表信息.md"
     if not md_path.exists():
         return None, ["缺少草稿/申请表信息.md"]
-    fields, warnings = parse_application_lines(md_path)
-    out_path = out_dir / "申请表信息.txt"
-    out_path.write_text("\n".join(fields) + "\n", encoding="utf-8")
+    lines = md_path.read_text(encoding="utf-8").splitlines()
+
+    output: list[str] = ["# 申请表信息", ""]
+    warnings: list[str] = []
+    current_section: str = ""
+    pending_fields: list[tuple[str, str]] = []
+
+    def flush_section():
+        nonlocal current_section
+        if current_section and pending_fields:
+            output.append(f"## {current_section}")
+            output.append("")
+            output.append("| 字段 | 内容 |")
+            output.append("|---|---|")
+            for name, value in pending_fields:
+                output.append(f"| {name} | {value} |")
+            output.append("")
+        current_section = ""
+        pending_fields.clear()
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            flush_section()
+            current_section = stripped.lstrip("# ").strip()
+        elif stripped.startswith("➤"):
+            # Parse "➤field：value"
+            content = stripped[1:]  # remove ➤
+            if "：" in content:
+                field, value = content.split("：", 1)
+                pending_fields.append((field, value))
+                if "待用户确认" in value or "待填写" in value:
+                    warnings.append(stripped)
+            else:
+                pending_fields.append((content, ""))
+
+    flush_section()
+
+    out_path = out_dir / "申请表信息.md"
+    out_path.write_text("\n".join(output).strip() + "\n", encoding="utf-8")
     return out_path, warnings
 
 
@@ -158,6 +195,12 @@ def confirmation_issues(workdir: Path) -> list[str]:
     if not gates.get("business", {}).get("confirmed"):
         issues.append("业务理解尚未确认：请确认 草稿/业务理解.md 后记录 business 门禁")
 
+    if not gates.get("content-quality", {}).get("confirmed"):
+        issues.append("操作手册内容质量尚未通过：请记录 content-quality 门禁")
+
+    if not gates.get("manual", {}).get("confirmed"):
+        issues.append("操作手册尚未确认：请确认 草稿/操作手册.md 后记录 manual 门禁")
+
     if not gates.get("code-selection", {}).get("confirmed"):
         issues.append("代码文件选择尚未确认：请确认 草稿/代码文件选择.json 后记录 code-selection 门禁")
 
@@ -173,7 +216,9 @@ def confirmation_issues(workdir: Path) -> list[str]:
     app_md = draft_dir / "申请表信息.md"
     if app_md.exists():
         _, warnings = parse_application_lines(app_md)
-        if warnings:
+        # 经办人信息默认可稍后补填，不阻断生成
+        real_warnings = [w for w in warnings if "经办人" not in w and "AI" not in w]
+        if real_warnings:
             issues.append("申请表信息仍包含\"待用户确认\"字段")
     else:
         issues.append("缺少 草稿/申请表信息.md")
@@ -668,7 +713,7 @@ def add_markdown_table(document: Any, rows: list[list[str]]) -> None:
             if length > length_units[i]:
                 length_units[i] = length
 
-    # 3 — proportional allocation → scale to A4 → then clamp minimum
+    # 3 — proportional allocation → scale to A4
     A4_CM = 15.29
     MIN_CM = 1.2
     total_units = sum(length_units) or 1.0
@@ -678,12 +723,34 @@ def add_markdown_table(document: Any, rows: list[list[str]]) -> None:
         scale = A4_CM / raw_total
         raw_cm = [w * scale for w in raw_cm]
 
-    # Apply minimum only after scaling — then re-scale if total exceeds page
-    clamped = [max(w, MIN_CM) for w in raw_cm]
-    clamped_total = sum(clamped)
-    if clamped_total > A4_CM:
-        scale2 = A4_CM / clamped_total
-        clamped = [w * scale2 for w in clamped]
+    # 3a — header single-line minimum: measure each header's display width
+    #      (CJK = 2.0 units, Latin = 1.0 unit; SimSun 10.5pt ≈ 0.185 cm/unit)
+    UNIT_CM = 0.185
+    CELL_PAD_CM = 0.5
+    header_units = [0.0] * col_count
+    for i, text in enumerate(cleaned[0][:col_count]):
+        length = 0.0
+        for ch in str(text):
+            if '一' <= ch <= '鿿':
+                length += 2.0
+            else:
+                length += 1.0
+        header_units[i] = length
+    header_min_cm = [max(MIN_CM, hu * UNIT_CM + CELL_PAD_CM) for hu in header_units]
+
+    # 3b — reserve header_min first, then distribute remaining space proportionally
+    #      to each column's extra content demand beyond the header. This guarantees
+    #      headers are never wrapped while still giving content-heavy columns room.
+    reserved = sum(header_min_cm)
+    if reserved >= A4_CM:
+        # Extreme: headers alone exceed page — scale all down proportionally
+        s = A4_CM / reserved
+        clamped = [h * s for h in header_min_cm]
+    else:
+        remaining = A4_CM - reserved
+        extra_demand = [max(0.0, raw_cm[i] - header_min_cm[i]) for i in range(col_count)]
+        total_extra = sum(extra_demand) or 1.0
+        clamped = [header_min_cm[i] + (extra_demand[i] / total_extra) * remaining for i in range(col_count)]
 
     # 4 — set fixed layout, write column and cell widths
     table.allow_autofit = False
@@ -694,6 +761,14 @@ def add_markdown_table(document: Any, rows: list[list[str]]) -> None:
         table.columns[col_idx].width = width
         for row in table.rows:
             row.cells[col_idx].width = width
+
+    # 5 — vertical center all cells
+    for row in table.rows:
+        for cell in row.cells:
+            tc_pr = cell._tc.get_or_add_tcPr()
+            vAlign = OxmlElement("w:vAlign")
+            vAlign.set(qn("w:val"), "center")
+            tc_pr.append(vAlign)
 
 
 def parse_table_line(line: str) -> list[str]:
@@ -795,7 +870,7 @@ def build_manual_docx_python(md_path: Path, out_path: Path, base_dir: Path, soft
     lines: list[str] = []
     started = False
     for line in raw_lines:
-        if not started and (re.match(r"^##\s+\d+\.\s+", line.strip()) or re.match(r"^##\s+[一二三四五六七八九十]+、", line.strip())):
+        if not started and re.match(r"^##\s+\d+\s+", line.strip()):
             started = True
         if started:
             lines.append(line)
@@ -1005,23 +1080,22 @@ def build_all(workdir: Path, software_name: str, version: str, skip_preview: boo
     screenshot_method = screenshot_confirmation.get("screenshot-method", {}).get("method")
     screenshot_manifest = workdir / "截图/截图清单.json"
     if screenshot_method == "skip":
-        warnings.append("技术图表已嵌入——用户选择暂不截图的页面截图已保留占位符，存在补正风险")
+        warnings.append("用户选择跳过页面截图，操作手册已保留占位符，存在补正风险")
     elif screenshot_method and not screenshot_manifest.exists():
-        warnings.append("技术图表已嵌入——用户页面截图尚未提供或未运行截图整理，操作手册中截图位置为占位符，存在补正风险")
+        warnings.append("用户页面截图尚未提供或未运行截图整理，操作手册中截图位置为占位符，存在补正风险")
     elif screenshot_manifest.exists():
         screenshots = read_json_if_exists(screenshot_manifest).get("screenshots") or []
         if not screenshots:
             warnings.append("操作手册截图清单为空；操作手册应保留截图预留位置")
 
-    app_txt, app_warnings = write_application_txt(draft_dir, final_dir)
-    if app_txt:
-        outputs.append(app_txt)
+    app_md, app_warnings = write_application_md(draft_dir, final_dir)
+    if app_md:
+        outputs.append(app_md)
     warnings.extend(app_warnings)
 
     code_specs = [
-        ("代码-前30页.md", f"{safe_name}-代码(前30页).docx"),
-        ("代码-后30页.md", f"{safe_name}-代码(后30页).docx"),
-        ("代码-全部.md", f"{safe_name}-代码(全部).docx"),
+        ("代码-前后30页.md", f"{safe_name}_程序鉴别材料.docx"),
+        ("代码-全部.md", f"{safe_name}_程序鉴别材料.docx"),
     ]
     for md_name, docx_name in code_specs:
         md_path = draft_dir / md_name
@@ -1032,7 +1106,7 @@ def build_all(workdir: Path, software_name: str, version: str, skip_preview: boo
 
     manual_md = draft_dir / "操作手册.md"
     if manual_md.exists():
-        manual_out = final_dir / f"{safe_name}_操作手册.docx"
+        manual_out = final_dir / f"{safe_name}_文档鉴别材料.docx"
         manual_source = manual_md
         tmp_manual: Path | None = None
         if app_name and app_name != software_name:
@@ -1058,28 +1132,31 @@ def build_all(workdir: Path, software_name: str, version: str, skip_preview: boo
 
     skill_dir = Path(__file__).resolve().parents[1]
     notes = [] if skip_preview else docx_checks(skill_dir, [p for p in outputs if p.suffix.lower() == ".docx"])
-    report = write_report(final_dir, outputs, warnings, notes)
-    return {"outputs": [str(p) for p in outputs], "warnings": warnings, "report": str(report)}
-
-
-def write_report(workdir: Path, outputs: list[Path], warnings: list[str], notes: list[str]) -> Path:
-    report = workdir / "生成报告.md"
-    lines = ["# 生成报告", "", "## 输出文件", ""]
-    for path in outputs:
-        size = path.stat().st_size if path.exists() else 0
-        lines.append(f"- `{path.name}` ({size} bytes)")
-    lines.extend(["", "## 警告", ""])
-    if warnings:
-        lines.extend(f"- {warning}" for warning in warnings)
-    else:
-        lines.append("- 无")
-    lines.extend(["", "## DOCX 校验", ""])
-    if notes:
-        lines.extend(notes)
-    else:
-        lines.append("- 已跳过预览校验")
-    report.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return report
+    # ── Chart quality check (pre-flight for any charted manual) ──
+    screenshot_dir = draft_dir.parent / "截图"
+    if screenshot_dir.exists() and list(screenshot_dir.glob("*.png")):
+        chart_checker = skill_dir / "scripts" / "check_plantuml_charts.py"
+        if chart_checker.exists():
+            try:
+                result = subprocess.run(
+                    ["python3", str(chart_checker)],
+                    capture_output=True, encoding="utf-8", timeout=300,
+                    cwd=str(screenshot_dir),
+                )
+                if result.returncode != 0:
+                    warnings.append(
+                        f"飞书图表可读性检查未通过——存在中文渲染异常，存在补正风险。"
+                        f"请重写对应画板的 PlantUML 后重新导出。"
+                    )
+                    if result.stdout:
+                        for line in result.stdout.strip().split("\n")[-5:]:
+                            if "LONG" in line:
+                                warnings.append(f"  {line.strip()[:120]}")
+                else:
+                    notes.append("飞书图表可读性检查通过")
+            except Exception as e:
+                warnings.append(f"飞书图表检查脚本执行失败: {e}")
+    return {"outputs": [str(p) for p in outputs], "warnings": warnings, "notes": notes}
 
 
 def main() -> None:
@@ -1098,7 +1175,7 @@ def main() -> None:
     issues = confirmation_issues(workdir)
     if issues:
         print("STOP_FOR_USER")
-        print("NEXT_ACTION: 正式 Word/TXT 生成前必须完成以下确认：")
+        print("NEXT_ACTION: 正式资料生成前必须完成以下确认：")
         for issue in issues:
             print(f"- {issue}")
         raise SystemExit(2)
@@ -1111,7 +1188,6 @@ def main() -> None:
         print("Warnings:")
         for warning in result["warnings"]:
             print(f"- {warning}")
-    print(f"Report: {result['report']}")
 
 
 if __name__ == "__main__":

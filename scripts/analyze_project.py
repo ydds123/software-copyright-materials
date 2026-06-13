@@ -28,6 +28,23 @@ DEPENDENCY_FRAMEWORKS = {
     "@tauri-apps/api": "Tauri",
 }
 
+# ── Sub-project detection ──
+# When the project root contains multiple independent repos (e.g. welleyao-hse-web,
+# welleyao-hse-plus, welleyao-hse-app), each sub-directory with one of these files
+# is treated as a sub-project and analyzed independently.
+SUB_PROJECT_MARKERS = {
+    "package.json",       # Node / frontend
+    "pom.xml",            # Maven / Java
+    "build.gradle",       # Gradle / Kotlin
+    "build.gradle.kts",   # Gradle Kotlin DSL
+    "settings.gradle.kts",# Gradle settings
+    "Cargo.toml",         # Rust
+    "go.mod",             # Go
+    "requirements.txt",   # Python
+    "pyproject.toml",     # Python
+    "setup.py",           # Python
+}
+
 ENTRY_NAMES = {
     "main.ts",
     "main.js",
@@ -132,6 +149,88 @@ def summarize_readme(project: Path) -> str:
     return ""
 
 
+def detect_sub_projects(project: Path) -> list[dict[str, Any]]:
+    """Find sub-directories that look like independent repos.
+
+    Scans immediate children of *project* for project markers (package.json,
+    pom.xml, etc.).  Each sub-project directory is treated as its own root for
+    framework / language / file-count analysis.
+    """
+    subs: list[dict[str, Any]] = []
+    try:
+        children = [p for p in project.iterdir() if p.is_dir() and not p.name.startswith(".")]
+    except OSError:
+        return subs
+
+    for child in sorted(children):
+        markers = [m for m in SUB_PROJECT_MARKERS if (child / m).exists()]
+        if not markers:
+            continue
+
+        sub_package, sub_package_path = load_package(child)
+        if sub_package_path is None and "pom.xml" in markers:
+            # Maven project — load pom.xml as XML-ish text for name inference
+            sub_package = _load_maven_meta(child / "pom.xml")
+            sub_package_path = child / "pom.xml"
+        if sub_package_path is None and "settings.gradle.kts" in markers:
+            sub_package = _load_gradle_meta(child / "settings.gradle.kts")
+            sub_package_path = child / "settings.gradle.kts"
+        if sub_package_path is None and "build.gradle.kts" in markers:
+            sub_package = _load_gradle_meta(child / "build.gradle.kts")
+            sub_package_path = child / "build.gradle.kts"
+
+        # Scan only this sub-project for files
+        sub_files = [p for p in iter_project_files(child, COPYRIGHT_CODE_EXTS) if not is_known_config_file(p)]
+        sub_frontend = [p for p in sub_files if p.suffix.lower() in FRONTEND_EXTS]
+        sub_lines = sum(count_text_lines(p, skip_blank=False) for p in sub_files)
+        sub_frameworks = detect_frameworks(sub_package, sub_frontend, child)
+        ext_counts: Counter[str] = Counter(p.suffix.lower() for p in sub_files)
+        sub_lang = infer_language(ext_counts, sub_frameworks)
+
+        subs.append({
+            "name": child.name,
+            "path": str(child.resolve()),
+            "markers": markers,
+            "frameworks": sub_frameworks,
+            "language": sub_lang,
+            "file_count": len(sub_files),
+            "line_count": sub_lines,
+            "top_extensions": dict(ext_counts.most_common(5)),
+        })
+
+    return subs
+
+
+def _load_maven_meta(pom_path: Path) -> dict[str, Any] | None:
+    try:
+        text = read_text(pom_path, limit=4000)
+    except Exception:
+        return None
+    art = re.search(r"<artifactId>([^<]+)</artifactId>", text)
+    ver = re.search(r"<version>([^<]*)</version>", text)
+    rev = re.search(r"<revision>([^<]+)</revision>", text)
+    return {
+        "name": art.group(1).strip() if art else pom_path.parent.name,
+        "version": rev.group(1).strip() if rev else (ver.group(1).strip() if ver else "V1.0"),
+        "scripts": {},
+        "dependency_names": [],
+    }
+
+
+def _load_gradle_meta(gradle_path: Path) -> dict[str, Any] | None:
+    try:
+        text = read_text(gradle_path, limit=2000)
+    except Exception:
+        return None
+    root_name = re.search(r'rootProject\.name\s*=\s*"([^"]+)"', text)
+    return {
+        "name": root_name.group(1) if root_name else gradle_path.parent.name,
+        "version": "V1.0",
+        "scripts": {},
+        "dependency_names": [],
+    }
+
+
 def analyze(project: Path) -> dict[str, Any]:
     project = project.resolve()
     package, package_path = load_package(project)
@@ -178,18 +277,13 @@ def analyze(project: Path) -> dict[str, Any]:
     frameworks = detect_frameworks(package, frontend_files, project)
     language = infer_language(extension_counts, frameworks)
     route_paths = sorted(set(route_paths), key=lambda x: (x.count("/"), x))
+    sub_projects = detect_sub_projects(project)
 
     return {
         "project_root": str(project),
         "project_name": project.name,
         "software_name_candidate": normalize_title(package_name or project.name),
-        "package": {
-            "name": package_name,
-            "path": rel(package_path, project) if package_path else "",
-            "version": str(package.get("version") or "V1.0") if package else "V1.0",
-            "scripts": scripts,
-            "dependency_names": sorted(dependencies),
-        },
+        "sub_projects": sub_projects,
         "frameworks": frameworks,
         "language": language,
         "source": {
@@ -233,7 +327,7 @@ def check_environment_gate(out: Path) -> None:
         raise SystemExit(
             "STOP_FOR_USER\n"
             "NEXT_ACTION: 环境检查仍有未确认事项。请先按 环境检查.md 处理 DOCX 和飞书相关选择，"
-            "然后运行 `python3 <SKILL_DIR>/scripts/confirm_stage.py --workdir 软件著作权申请资料 --stage environment --note \"<用户选择>\"`。"
+            "然后运行 `python3 <SKILL_DIR>/scripts/confirm_stage.py --workdir <任务目录> --stage environment --note \"<用户选择>\" --confirm`。"
         )
 
 

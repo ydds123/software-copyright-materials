@@ -119,7 +119,7 @@ def load_selected_files(project: Path, selection_path: Path | None) -> list[dict
         raise SystemExit(
             "STOP_FOR_USER\n"
             "NEXT_ACTION: 代码文件选择尚未确认。请先确认或修改 草稿/代码文件选择.json，"
-            "再运行 `python3 <SKILL_DIR>/scripts/confirm_stage.py --workdir 软件著作权申请资料 --stage code-selection --note \"<用户确认内容>\"`。"
+            "再运行 `python3 <SKILL_DIR>/scripts/confirm_stage.py --workdir <任务目录> --stage code-selection --note \"<用户确认内容>\" --confirm`。"
         )
     items = data.get("files") if isinstance(data, dict) else data
     if not isinstance(items, list):
@@ -191,6 +191,17 @@ def write_pages_md(path: Path, title: str, software_name: str, version: str, pag
     path.write_text("\n".join(chunks), encoding="utf-8")
 
 
+def write_pages_md_append(path: Path, title: str, software_name: str, version: str, pages: list[tuple[int, list[str]]]) -> None:
+    """Append back-page material to an existing MD file (no duplicate header)."""
+    chunks = [f"# {title}", f"软件名称：{software_name}", f"版本号：{version}", ""]
+    for page_no, page_lines in pages:
+        chunks.extend([f"## 第 {page_no} 页", "", "```text"])
+        chunks.extend(page_lines)
+        chunks.extend(["```", ""])
+    with open(path, "a", encoding="utf-8") as f:
+        f.write("\n".join(chunks) + "\n")
+
+
 def write_manifest_md(path: Path, manifest: dict[str, Any]) -> None:
     lines = [
         "# 代码提取清单",
@@ -243,11 +254,13 @@ def extract(project: Path, out_dir: Path, software_name: str, version: str, line
         front = list(enumerate(pages[:30], start=1))
         back_start = total_pages - 29
         back = [(back_start + i, page) for i, page in enumerate(pages[-30:])]
-        front_path = out_dir / "代码-前30页.md"
-        back_path = out_dir / "代码-后30页.md"
-        write_pages_md(front_path, "代码材料（前30页）", software_name, version, front)
-        write_pages_md(back_path, "代码材料（后30页）", software_name, version, back)
-        outputs.extend([front_path.name, back_path.name])
+        combined_path = out_dir / "代码-前后30页.md"
+        write_pages_md(combined_path, "代码材料（前30页）", software_name, version, front)
+        # Append back 30 pages to same file
+        with open(combined_path, "a", encoding="utf-8") as f:
+            f.write("\n")
+        write_pages_md_append(combined_path, "代码材料（后30页）", software_name, version, back)
+        outputs.append(combined_path.name)
         mode = "front30_back30"
     else:
         all_path = out_dir / "代码-全部.md"

@@ -16,7 +16,7 @@ from pathlib import Path
 # Only these specific scripts are gate-protected
 STEP_GATES: dict[str, list[str]] = {
     "extract_code_material.py": ["code-selection"],
-    "build_docx_from_md.py": ["markdown", "diagrams"],
+    "build_docx_from_md.py": ["markdown"],
 }
 
 GATE_FILE = "门禁状态.json"

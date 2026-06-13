@@ -35,9 +35,29 @@
     }
   ],
   "_说明2": "manual_modules 必须按模块操作类型分类填写。分类规则见 references/module_classification_rules.md。台账型用 registry 结构，业务型用 business_operation 结构，混合型两者都填。",
-  "_说明3": "client_endpoint 标注该模块属于哪个端。单端系统全部写 web；多端系统按实际分 web/app/screen。渲染器据此按端聚合章节。",
-  "_说明4": "role_chain / upstream_dependency / downstream_impact 是可选叙事字段。填写后渲染器会在模块正文中嵌入角色叙事和业务上下文——比仅靠 purpose+visible_elements 的模板化输出更接近目标态样本的叙事密度。",
+  "_说明3": "client_endpoint 标注该模块属于哪个端。单端系统全部写 web；多端系统按实际分 web/app/screen。模型据此组织各端操作章节。",
+  "_说明4": "role_chain / upstream_dependency / downstream_impact 是可选叙事字段。模型撰写模块正文时应将其转化为角色叙事、使用前提和下游影响。",
   "system_endpoints": ["web"],
+  "product_composition": [
+    {
+      "endpoint": "Web 管理端",
+      "audience": "模型填写真实目标用户",
+      "repository": "模型填写代码仓库绝对路径",
+      "module_paths": ["模型填写模块相对路径"]
+    }
+  ],
+  "closed_loop_validation": {
+    "chain": ["模块A"],
+    "node_mapping": [
+      {
+        "node": "模块A",
+        "module": "manual_modules 中对应模块标题",
+        "role": "执行该环节的角色",
+        "result": "该环节产生的结果及其如何进入下一环节"
+      }
+    ],
+    "conclusion": "模型填写闭环是否完整；若不完整，先补充模块后再写通过结论。"
+  },
   "manual_modules": [
     {
       "_示例_台账型": "适用于设备管理、二维码管理、NFC标签管理等纯CRUD模块",
