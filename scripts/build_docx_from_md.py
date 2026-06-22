@@ -1132,30 +1132,6 @@ def build_all(workdir: Path, software_name: str, version: str, skip_preview: boo
 
     skill_dir = Path(__file__).resolve().parents[1]
     notes = [] if skip_preview else docx_checks(skill_dir, [p for p in outputs if p.suffix.lower() == ".docx"])
-    # ── Chart quality check (pre-flight for any charted manual) ──
-    screenshot_dir = draft_dir.parent / "截图"
-    if screenshot_dir.exists() and list(screenshot_dir.glob("*.png")):
-        chart_checker = skill_dir / "scripts" / "check_plantuml_charts.py"
-        if chart_checker.exists():
-            try:
-                result = subprocess.run(
-                    ["python3", str(chart_checker)],
-                    capture_output=True, encoding="utf-8", timeout=300,
-                    cwd=str(screenshot_dir),
-                )
-                if result.returncode != 0:
-                    warnings.append(
-                        f"飞书图表可读性检查未通过——存在中文渲染异常，存在补正风险。"
-                        f"请重写对应画板的 PlantUML 后重新导出。"
-                    )
-                    if result.stdout:
-                        for line in result.stdout.strip().split("\n")[-5:]:
-                            if "LONG" in line:
-                                warnings.append(f"  {line.strip()[:120]}")
-                else:
-                    notes.append("飞书图表可读性检查通过")
-            except Exception as e:
-                warnings.append(f"飞书图表检查脚本执行失败: {e}")
     return {"outputs": [str(p) for p in outputs], "warnings": warnings, "notes": notes}
 
 

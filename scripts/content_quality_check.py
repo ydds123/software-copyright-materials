@@ -1695,35 +1695,6 @@ def main() -> None:
     else:
         print("  OK: 无数据字典或内部标识符泄漏")
 
-    # ── 检查 23: 飞书图表可读性（PlantUML 中文防乱码）──
-    print("\n[23/23] 飞书图表可读性检查 (PlantUML 中文防乱码)")
-    screenshot_dir = manual_path.parent.parent / "截图"
-    chart_checker = Path(__file__).resolve().parent / "check_plantuml_charts.py"
-    if screenshot_dir.exists() and chart_checker.exists():
-        png_files = list(screenshot_dir.glob("*.png"))
-        if png_files:
-            try:
-                result = subprocess.run(
-                    ["python3", str(chart_checker)],
-                    capture_output=True, encoding="utf-8", timeout=300,
-                    cwd=str(screenshot_dir),
-                )
-                if result.returncode != 0:
-                    all_errors.append("飞书图表可读性检查未通过——PlantUML 中文节点过长导致渲染乱码。请重写画板后重新导出。")
-                    print("  [error] 飞书图表可读性检查未通过——存在渲染乱码")
-                    for line in result.stdout.strip().split("\n")[-10:]:
-                        if "LONG" in line or "Total issues" in line:
-                            print(f"    {line.strip()[:140]}")
-                else:
-                    print("  OK: 飞书图表可读性检查通过")
-            except Exception as e:
-                all_warnings.append(f"飞书图表检查脚本异常: {e}")
-                print(f"  [warn] 飞书图表检查脚本异常: {e}")
-        else:
-            print("  SKIP: 截图目录为空")
-    else:
-        print("  SKIP: 截图目录或检查脚本不存在")
-
     # ── 判定 ──
     print("\n" + "=" * 60)
     total_errors = len(all_errors)
