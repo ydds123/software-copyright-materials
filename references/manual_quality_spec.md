@@ -144,6 +144,9 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/content_quality_check.py --manual 草稿/操
 
 ### 7.1 自动 Gate 映射
 
+> 门禁的完整定义（能力、局限性、实现状态）以 `references/quality_gates.json` 为准。
+> 下表仅列出质量规则与自动检查重点的对应关系。
+
 | Gate | 质量规则 | 自动检查重点 |
 |---|---|---|
 | 1 | Q-W04 | 技术术语禁词 |

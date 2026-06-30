@@ -11,64 +11,38 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from common import confirm_params, ensure_dir, read_json, read_text, resolve_draft_dir
+from common import confirm_params, ensure_dir, read_json, read_text, resolve_draft_dir, skill_dir
 
 
 MIN_MAIN_FUNCTION_CHARS = 500
 MAX_MAIN_FUNCTION_CHARS = 1300
 
 
-FIELD_ORDER = [
-    # 软件申请信息
-    "软件全称",
-    "软件简称",
-    "版本号",
-    "著作权人",
-    "著作权人类型",
-    "权利范围",
+def _load_fields_config() -> dict:
+    return read_json(skill_dir() / "references" / "application_fields.json")
 
-    # 软件开发信息
-    "软件分类",
-    "软件说明",
-    "开发方式",
-    "开发完成日期",
-    "首次发表日期",
 
-    # 软件功能与特点
-    "开发的硬件环境",
-    "运行的硬件环境",
-    "开发该软件的操作系统",
-    "软件开发环境 / 开发工具",
-    "该软件的运行平台 / 操作系统",
-    "软件运行支撑环境 / 支持软件",
-    "编程语言",
-    "源程序量",
-    "开发目的",
-    "面向领域 / 行业",
-    "软件的主要功能",
-    "软件的技术特点",
+def _field_order() -> list:
+    return _load_fields_config()["field_order"]
 
-    # 2026 新政附加
-    "页数",
-    "AI 开发限制声明",
-    "经办人姓名",
-    "经办人身份证号码",
-    "经办人职务",
-]
 
-PROGRAMMING_LANGUAGES = [
-    "Assembly language", "Java", "Python", "JavaScript", "R", "C#", "MATLAB", "Ruby",
-    "C++", "Objective-C", "SQL", "Delphi/Object Pascal", "PHP", "Swift", "Go",
-    "PL/SQL", "Visual Basic", "HTML", "Perl", "Visual Basic.Net", "其他",
-]
+def _section_fields() -> list[tuple[str, list[str]]]:
+    cfg = _load_fields_config()
+    sections = cfg["sections"]
+    return [
+        ("## 软件申请信息", sections["软件申请信息"]["fields"]),
+        ("## 软件开发信息", sections["软件开发信息"]["fields"]),
+        ("## 软件功能与特点", sections["软件功能与特点"]["fields"]),
+        ("## 附加信息（2026 新政）", sections["附加信息（2026 新政）"]["fields"]),
+    ]
 
-SOFTWARE_CATEGORIES = ["应用软件", "嵌入式软件", "中间件", "操作系统"]
 
-TECHNICAL_FEATURES = [
-    "APP", "信息安全软件", "游戏软件", "大数据软件", "教育软件", "人工智能软件",
-    "金融软件", "VR软件", "医疗软件", "5G软件", "地理信息软件", "小程序",
-    "云计算软件", "物联网软件", "智慧城市软件", "其他",
-]
+def _word_limits() -> dict:
+    return _load_fields_config()["word_limits"]
+
+
+MIN_MAIN_FUNCTION_CHARS = 500
+MAX_MAIN_FUNCTION_CHARS = 1300
 
 
 def summarize_features(analysis: dict[str, Any], software_name: str, business: dict[str, Any] | None = None) -> str:
@@ -180,6 +154,76 @@ def humanize_feature(name: str) -> str:
     return mapping.get(key, value.title() if re.search(r"[A-Za-z]", value) else value)
 
 
+def _validate_business_text_fields(
+    business: dict[str, Any] | None,
+    analysis: dict[str, Any],
+    software_name: str,
+) -> tuple[str, str, list[str]]:
+    """Validate main_functions and technical_characteristics from business context.
+
+    Returns (main_functions, technical_characteristics, warnings).
+    Rejects business-sourced values that violate hard constraints and falls back
+    to script defaults — preventing truncated or malformed content from silently
+    reaching the application form.
+    """
+    warnings: list[str] = []
+    frameworks = analysis.get("frameworks") or []
+    framework_text = "、".join(frameworks) if frameworks else "前端工程化框架"
+
+    if business is None:
+        return (
+            summarize_features(analysis, software_name, None),
+            f"系统采用{framework_text}构建前端界面，结合模块化组件、路由组织、接口封装和状态管理实现业务功能，具备较好的可维护性和扩展性。",
+            warnings,
+        )
+
+    # ── main_functions ──
+    raw_main = str(business.get("main_functions") or "").strip()
+    if raw_main:
+        main_len = len(raw_main.replace(" ", "").replace("\n", ""))
+        wl = _word_limits()
+        min_chars = wl.get("main_function_min", 500)
+        if main_len < min_chars:
+            warnings.append(
+                f"[业务理解无效] 业务理解中的 main_functions 仅 {main_len} 字"
+                f"（要求 ≥ {min_chars} 字），已回退到脚本兜底生成。"
+                f"请回到 Step 4 补全业务理解 JSON 的 main_functions 字段后重新生成。"
+            )
+            raw_main = ""  # reject, fall through to fallback
+    if not raw_main:
+        raw_main = summarize_features(analysis, software_name, business)
+
+    # ── technical_characteristics ──
+    raw_tech = str(business.get("technical_characteristics") or "").strip()
+    if raw_tech:
+        tech_len = len(raw_tech.replace(" ", "").replace("\n", ""))
+        cfg = _load_fields_config()
+        classifications = cfg["technical_features"]
+        has_classification = any(raw_tech.startswith(c) for c in classifications)
+        if not has_classification:
+            warnings.append(
+                f"[业务理解无效] 业务理解中的 technical_characteristics 缺少分类前缀"
+                f"（应为「{', '.join(classifications[:4])}... 等」之一），已回退到脚本兜底。"
+                f"请回到 Step 4 修正业务理解 JSON 的 technical_characteristics 字段后重新生成。"
+            )
+            raw_tech = ""  # reject
+        elif tech_len > 100:
+            warnings.append(
+                f"[业务理解无效] 业务理解中的 technical_characteristics 共 {tech_len} 字"
+                f"（上限 100 字），已回退到脚本兜底。"
+                f"请回到 Step 4 精简业务理解 JSON 的 technical_characteristics 字段后重新生成。"
+            )
+            raw_tech = ""  # reject
+    if not raw_tech:
+        raw_tech = (
+            f"系统采用{framework_text}构建前端界面，"
+            f"结合模块化组件、路由组织、接口封装和状态管理实现业务功能，"
+            f"具备较好的可维护性和扩展性。"
+        )
+
+    return raw_main, raw_tech, warnings
+
+
 def build_fields(
     analysis: dict[str, Any],
     manifest: dict[str, Any],
@@ -187,15 +231,17 @@ def build_fields(
     version: str,
     answers: dict[str, str],
     business: dict[str, Any] | None = None,
-) -> dict[str, str]:
-    frameworks = analysis.get("frameworks") or []
-    framework_text = "、".join(frameworks) if frameworks else "前端工程化框架"
+) -> tuple[dict[str, str], list[str]]:
     language = analysis.get("language") or "待用户确认"
     project = Path(analysis.get("project_root") or ".")
     hardware_hint = current_hardware_environment()
     dev_os_hint = current_operating_system()
     version_hint = version_confirmation_hint(analysis, version)
     software_name_hint = f"待用户确认（建议：{software_name}；请确认最终软件全称）"
+
+    main_func, tech_char, biz_warnings = _validate_business_text_fields(
+        business, analysis, software_name
+    )
 
     defaults = {
         # 软件申请信息
@@ -224,8 +270,8 @@ def build_fields(
         "源程序量": format_source_lines(analysis, manifest),
         "开发目的": (business.get("application_purpose") or f"建设{software_name}，为用户提供稳定、便捷的信息化操作能力，提升相关业务处理效率。") if business else f"建设{software_name}，为用户提供稳定、便捷的信息化操作能力，提升相关业务处理效率。",
         "面向领域 / 行业": (business.get("industry") or "待用户确认") if business else "待用户确认",
-        "软件的主要功能": (business.get("main_functions") or summarize_features(analysis, software_name, business)) if business else summarize_features(analysis, software_name, business),
-        "软件的技术特点": (business.get("technical_characteristics") or f"系统采用{framework_text}构建前端界面，结合模块化组件、路由组织、接口封装和状态管理实现业务功能，具备较好的可维护性和扩展性。") if business else f"系统采用{framework_text}构建前端界面，结合模块化组件、路由组织、接口封装和状态管理实现业务功能，具备较好的可维护性和扩展性。",
+        "软件的主要功能": main_func,
+        "软件的技术特点": tech_char,
         # 2026 新政附加
         "页数": str(manifest.get("total_pages") or "待用户确认"),
         "AI 开发限制声明": "待用户确认（需手抄：未使用 AI 开发编写代码、撰写文档或生成登记申请材料）",
@@ -234,7 +280,7 @@ def build_fields(
         "经办人职务": "待用户确认",
     }
     defaults.update({k: v for k, v in answers.items() if v})
-    return defaults
+    return defaults, biz_warnings
 
 
 def version_numbers(value: str) -> tuple[int, ...]:
@@ -483,34 +529,23 @@ def infer_runtime_support(analysis: dict[str, Any], project: Path) -> str:
     return "待用户确认"
 
 
-def write_application_md(path: Path, fields: dict[str, str], analysis: dict[str, Any], manifest: dict[str, Any], business: dict[str, Any] | None = None) -> None:
+def write_application_md(path: Path, fields: dict[str, str], analysis: dict[str, Any], manifest: dict[str, Any], business: dict[str, Any] | None = None, biz_warnings: list[str] | None = None) -> None:
     lines = ["# 申请表信息", ""]
 
-    # Section headers and their field ranges
-    sections = [
-        ("## 软件申请信息", ["软件全称", "软件简称", "版本号", "著作权人", "著作权人类型", "权利范围"]),
-        ("## 软件开发信息", ["软件分类", "软件说明", "开发方式", "开发完成日期", "首次发表日期"]),
-        ("## 软件功能与特点", [
-            "开发的硬件环境", "运行的硬件环境", "开发该软件的操作系统",
-            "软件开发环境 / 开发工具", "该软件的运行平台 / 操作系统",
-            "软件运行支撑环境 / 支持软件", "编程语言", "源程序量", "开发目的",
-            "面向领域 / 行业", "软件的主要功能", "软件的技术特点",
-        ]),
-        ("## 附加信息（2026 新政）", ["页数", "AI 开发限制声明", "经办人姓名", "经办人身份证号码", "经办人职务"]),
-    ]
-
-    for section_title, section_fields in sections:
+    for section_title, section_fields in _section_fields():
         lines.append(section_title)
         lines.append("")
         for field in section_fields:
-            if field in FIELD_ORDER:  # only output if field is declared
+            if field in _field_order():  # only output if field is declared
                 lines.append(f"➤{field}：{fields.get(field, '待用户确认')}")
         lines.append("")
 
-    pending = [field for field in FIELD_ORDER if "待用户确认" in (fields.get(field) or "") and "首次发表日期" not in field]
+    pending = [field for field in _field_order() if "待用户确认" in (fields.get(field) or "") and "首次发表日期" not in field]
 
     # Build warnings for common issues
     warnings: list[str] = []
+    if biz_warnings:
+        warnings.extend(biz_warnings)
     soft_name = fields.get("软件全称", "")
     clean_name = str(soft_name).strip()
     raw_name = clean_name
@@ -524,20 +559,19 @@ def write_application_md(path: Path, fields: dict[str, str], analysis: dict[str,
             warnings.append(f"软件全称以「{suffix}」结尾，存在被驳回风险。建议考虑去掉「{suffix}」后缀或改用其他命名方式。")
 
     main_func = fields.get("软件的主要功能", "")
+    wl = _word_limits()
+    min_func = wl.get("main_function_min", MIN_MAIN_FUNCTION_CHARS)
+    max_func = wl.get("main_function_max", MAX_MAIN_FUNCTION_CHARS)
     if main_func and "待用户确认" not in main_func:
         func_len = len(str(main_func).replace(" ", "").replace("\n", ""))
-        if func_len < MIN_MAIN_FUNCTION_CHARS:
-            warnings.append(f"软件的主要功能仅有 {func_len} 字符，应不少于 {MIN_MAIN_FUNCTION_CHARS} 字符。请扩写功能说明。")
-        elif func_len > MAX_MAIN_FUNCTION_CHARS:
-            warnings.append(f"软件的主要功能共 {func_len} 字符，超过建议上限 {MAX_MAIN_FUNCTION_CHARS} 字符。请精简。")
+        if func_len < min_func:
+            warnings.append(f"软件的主要功能仅有 {func_len} 字符，应不少于 {min_func} 字符。请扩写功能说明。")
+        elif func_len > max_func:
+            warnings.append(f"软件的主要功能共 {func_len} 字符，超过建议上限 {max_func} 字符。请精简。")
 
     # 字段字数限制检查
-    INPUT_50_FIELDS = [
-        "开发的硬件环境", "运行的硬件环境", "开发该软件的操作系统",
-        "软件开发环境 / 开发工具", "该软件的运行平台 / 操作系统",
-        "软件运行支撑环境 / 支持软件", "开发目的", "面向领域 / 行业",
-    ]
-    for fld in INPUT_50_FIELDS:
+    INPUT_50_FIELDS_CFG = wl["50_char_fields"]
+    for fld in INPUT_50_FIELDS_CFG:
         val = fields.get(fld, "")
         if val and "待用户确认" not in val:
             n = len(str(val).replace(" ", "").replace("\n", ""))
@@ -547,8 +581,32 @@ def write_application_md(path: Path, fields: dict[str, str], analysis: dict[str,
     lang_val = fields.get("编程语言", "")
     if lang_val and "待用户确认" not in lang_val:
         n = len(str(lang_val).replace(" ", "").replace("\n", ""))
-        if n > 120:
-            warnings.append(f"[字数超限]「编程语言」共 {n} 字（上限 120 字），请精简。")
+        lang_max = wl.get("programming_language_max", 120)
+        if n > lang_max:
+            warnings.append(f"[字数超限]「编程语言」共 {n} 字（上限 {lang_max} 字），请精简。")
+
+    # 软件的技术特点：必须包含预定义分类前缀
+    tech_parts_val = fields.get("软件的技术特点", "")
+    if tech_parts_val and "待用户确认" not in tech_parts_val:
+        cfg = _load_fields_config()
+        classifications = cfg["technical_features"]
+        has_classification = False
+        for cls in classifications:
+            if str(tech_parts_val).startswith(cls):
+                has_classification = True
+                break
+        if not has_classification:
+            warnings.append(f"[格式缺失]「软件的技术特点」缺少分类前缀——请从 {', '.join(classifications)} 中选择一个加在描述前面，格式为「分类, 描述」。")
+
+    # 软件的主要功能：结构信号检查（技术架构 + 功能模块）
+    func_val = fields.get("软件的主要功能", "")
+    if func_val and "待用户确认" not in func_val:
+        has_arch = any(kw in str(func_val) for kw in ("B/S", "C/S", "浏览器/服务器", "客户端/服务器", "架构", "框架", "Spring", "Vue", "React", "数据库"))
+        has_modules = any(kw in str(func_val) for kw in ("一、", "二、", "1.", "2.", "模块", "覆盖以下"))
+        if not has_arch:
+            warnings.append("[结构提醒]「软件的主要功能」缺少技术架构概述——建议开头交代系统的 B/S 或 C/S 架构、前后端框架、数据库等技术栈。")
+        if not has_modules:
+            warnings.append("[结构提醒]「软件的主要功能」缺少功能模块展开——建议逐模块描述核心功能。")
 
     lines.extend(
         [
@@ -642,9 +700,9 @@ def main() -> None:
 
     confirm_params({"输出目录": str(out_dir), "软件名称": args.software_name, "版本号": args.version}, args.confirm)
 
-    fields = build_fields(analysis, manifest, args.software_name, args.version, answers, business)
+    fields, biz_warnings = build_fields(analysis, manifest, args.software_name, args.version, answers, business)
     out_path = out_dir / "申请表信息.md"
-    write_application_md(out_path, fields, analysis, manifest, business)
+    write_application_md(out_path, fields, analysis, manifest, business, biz_warnings)
     print(f"OK application draft: {out_path}")
     print("STOP_FOR_USER")
     print("NEXT_ACTION: 请补全并确认申请表字段；确认后运行 confirm_stage.py --stage application-fields --confirm。")

@@ -164,6 +164,11 @@ def repo_root_from_script() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
+def skill_dir() -> Path:
+    """Return the software-copyright-materials skill root directory."""
+    return Path(__file__).resolve().parents[1]
+
+
 def is_excluded(path: Path) -> bool:
     parts = set(path.parts)
     if parts & EXCLUDE_DIRS:
