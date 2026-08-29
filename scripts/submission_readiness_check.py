@@ -56,7 +56,11 @@ def _run_checker(args: list[str]) -> tuple[int, str]:
     return result.returncode, ((result.stdout or "") + (result.stderr or "")).strip()
 
 
-def run(workdir: Path, batch_manuals: list[Path] | None = None) -> dict[str, Any]:
+def run(
+    workdir: Path,
+    batch_manuals: list[Path] | None = None,
+    final_artifact: Path | None = None,
+) -> dict[str, Any]:
     errors: list[str] = []
     warnings: list[str] = []
     checks: dict[str, dict[str, Any]] = {}
@@ -65,9 +69,16 @@ def run(workdir: Path, batch_manuals: list[Path] | None = None) -> dict[str, Any
     if not gates_path.exists():
         return {"status": "invalid", "errors": ["缺少 门禁状态.json"]}
     gates = read_json(gates_path)
+    # gate switches (plan §completion-11: per-gate on/off)
+    switches = gates.get("switches", {})
+    scripts = Path(__file__).resolve().parent
+    plan_path = workdir / "草稿" / MATERIAL_PLAN
+    manual_path = workdir / "草稿" / MANUAL_FILE
+
+    profile = gates.get("material-plan", {}).get("workflow_profile", "legacy-v1")
+    checks["workflow_profile"] = {"value": profile}
 
     # 1. material-plan confirmed + unchanged
-    plan_path = workdir / "草稿" / MATERIAL_PLAN
     if plan_path.exists():
         entry = gates.get("material-plan", {})
         if not entry.get("confirmed"):
@@ -84,16 +95,13 @@ def run(workdir: Path, batch_manuals: list[Path] | None = None) -> dict[str, Any
 
     # 2. re-run evidence_plan_check
     if plan_path.exists():
-        scripts = Path(__file__).resolve().parent
         code, out = _run_checker([str(scripts / "evidence_plan_check.py"), "--plan", str(plan_path)])
         checks["evidence-plan"] = {"exit": code, "output": out[:500]}
         if code != 0:
             errors.append(f"evidence_plan_check 未通过（exit {code}）")
 
     # 3. re-run logic consistency on the manual
-    manual_path = workdir / "草稿" / MANUAL_FILE
     if manual_path.exists():
-        scripts = Path(__file__).resolve().parent
         code, out = _run_checker(
             [str(scripts / "logic_consistency_check.py"), "--manual", str(manual_path)]
             + (["--plan", str(plan_path)] if plan_path.exists() else [])
@@ -104,13 +112,46 @@ def run(workdir: Path, batch_manuals: list[Path] | None = None) -> dict[str, Any
 
     # 4. batch structure (only if multiple docs given)
     if batch_manuals and len(batch_manuals) >= 2:
-        scripts = Path(__file__).resolve().parent
         code, out = _run_checker(
             [str(scripts / "batch_structure_check.py"), "--manuals", *[str(m) for m in batch_manuals]]
         )
         checks["batch-structure"] = {"exit": code, "output": out[:500]}
         if code != 0:
             errors.append(f"batch_structure_check 未通过（exit {code}）")
+
+    # 4b. cross-material consistency (plan §6.1 gate 8)
+    if plan_path.exists() and switches.get("cross-material", "on") != "off":
+        cmd = [str(scripts / "cross_material_check.py"), "--plan", str(plan_path)]
+        if manual_path.exists():
+            cmd += ["--manual", str(manual_path)]
+        app_md = workdir / "草稿" / "申请表信息.md"
+        if app_md.exists():
+            cmd += ["--application", str(app_md)]
+        manifest = workdir / "草稿" / "代码提取清单.json"
+        if manifest.exists():
+            cmd += ["--code-manifest", str(manifest)]
+        code, out = _run_checker(cmd)
+        checks["cross-material"] = {"exit": code, "output": out[:500]}
+        if code != 0:
+            errors.append(f"cross_material_check 未通过（exit {code}）")
+
+    # 4c. final artifact re-check (plan §6.6)
+    if final_artifact and final_artifact.exists() and switches.get("final-artifact", "on") != "off":
+        scope = read_json(plan_path).get("software_scope", {}) if plan_path.exists() else {}
+        cmd = [
+            str(scripts / "final_artifact_check.py"),
+            "--artifact", str(final_artifact),
+            "--software-name", str(scope.get("name", "")),
+            "--version", str(scope.get("version", "")),
+        ]
+        if plan_path.exists():
+            cmd += ["--plan", str(plan_path)]
+        if manual_path.exists():
+            cmd += ["--source-manual", str(manual_path)]
+        code, out = _run_checker(cmd)
+        checks["final-artifact"] = {"exit": code, "output": out[:500]}
+        if code != 0:
+            errors.append(f"final_artifact_check 未通过（exit {code}）")
 
     # 5. required gates confirmed
     required = ["manual", "content-quality", "code-selection", "markdown"]
@@ -134,11 +175,16 @@ def main() -> None:
     parser.add_argument("--workdir", help="Task workdir; auto-resolved if omitted")
     parser.add_argument("--task-dir", help="Task root dir; auto-resolved if omitted")
     parser.add_argument("--batch-manuals", nargs="*", default=[], help="同批次其他操作手册路径")
+    parser.add_argument("--final-artifact", help="最终 DOCX/PDF 路径（复检）")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
     workdir = Path(args.workdir) if args.workdir else resolve_workdir(args.task_dir)
-    report = run(workdir, batch_manuals=[Path(m) for m in args.batch_manuals] or None)
+    report = run(
+        workdir,
+        batch_manuals=[Path(m) for m in args.batch_manuals] or None,
+        final_artifact=Path(args.final_artifact) if args.final_artifact else None,
+    )
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))
     else:

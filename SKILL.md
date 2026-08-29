@@ -641,6 +641,33 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/confirm_stage.py \
 
 确认会绑定计划哈希：**确认后修改计划，所有下游确认（code-selection、markdown、正式件构建）自动失效**，必须重新校验并确认。抽取时直接以计划为驱动（`--selection 草稿/材料证据计划.json`），支持文件内行段（line_range），抽取时校验哈希与范围。
 
+**视觉证据申报前置（计划确认时同步进行）：** 计划确认阶段必须展示「视觉证据申报清单」——每个核心功能需要的 A/B 级截图、建议内容与状态。清单全部 `pending` 时不得进入文档生成（`visual_evidence_check.py` V7 硬阻断）；无 UI 功能在计划中标记 `visual_status: not_applicable` 并给替代证据，有 UI 未拍走逐条豁免（`exempted`，不可批量）。确认清单后运行：
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/visual_evidence_check.py \
+  --plan 草稿/材料证据计划.json --screenshots 截图
+```
+
+视觉门禁除申报前置外还包含：覆盖率硬阻断（UI 型 80% / 后端型 50% 起步）、零 A/B 阻断、D 级冒充阻断、pHash 近似重复去重（dHash 距离 ≤ 4 只计一次）、未脱敏阻断、DeepSeek 模型判定与申报交叉验证（冲突进人工复核）。
+
+**跨材料一致性与最终件复检（提交前）：** 生成 DOCX/PDF 后运行：
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/cross_material_check.py \
+  --plan 草稿/材料证据计划.json --manual 草稿/操作手册.md \
+  --application 草稿/申请表信息.md --code-manifest 草稿/代码提取清单.json
+
+python3 ${CLAUDE_SKILL_DIR}/scripts/final_artifact_check.py \
+  --artifact 正式资料/<软件全称>_文档鉴别材料.docx \
+  --plan 草稿/材料证据计划.json --source-manual 草稿/操作手册.md \
+  --software-name "<软件全称>" --version "<版本号>"
+
+python3 ${CLAUDE_SKILL_DIR}/scripts/submission_readiness_check.py \
+  --workdir <任务目录> --final-artifact 正式资料/<软件全称>_文档鉴别材料.docx
+```
+
+最终件复检重新提取 DOCX/PDF 文本：核对名称/版本、图片嵌入与源稿引用数、章节编号连续性、事实断言；用户手工编辑最终文件后原"可提交"状态自动失效。门禁可在 `门禁状态.json` 的 `switches` 中独立开关（`cross-material`、`final-artifact` 等，值 `on/off`）。
+
 ### 7. 确认代码文件选择（基于操作手册模块）
 
 **前置检查**：

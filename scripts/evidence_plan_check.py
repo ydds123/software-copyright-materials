@@ -27,9 +27,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from common import read_json, resolve_draft_dir
+from common import read_json, resolve_draft_dir, write_json
 
 PLAN_FILE_NAME = "材料证据计划.json"
+REVIEW_REPORT_FILE = "独创性代表性审查报告.json"
 
 
 def sha256_of(path: Path) -> str:
@@ -142,6 +143,11 @@ def check_plan(plan_path: Path) -> tuple[list[str], list[str], dict[str, Any]]:
         "warnings": warnings,
         "plan_sha256": sha256_of(plan_path),
     }
+    # Persist the review report (single source of truth, plan §5.1)
+    try:
+        write_json(plan_path.parent / REVIEW_REPORT_FILE, report)
+    except Exception:
+        pass
     return errors, warnings, report
 
 

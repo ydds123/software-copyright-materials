@@ -120,6 +120,7 @@ def confirm_material_plan(workdir: Path, note: str) -> Path:
         note,
         artifact=MATERIAL_PLAN_FILE,
         artifact_sha256=_sha256(plan_path),
+        workflow_profile="v2",
     )
 
 

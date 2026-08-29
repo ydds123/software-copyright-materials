@@ -47,6 +47,43 @@ COVERAGE_DEFAULT = 0.8
 COVERAGE_BACKEND = 0.5
 
 
+def perceptual_hash(path: Path) -> str | None:
+    """dHash (difference hash) via Pillow when available.
+
+    Returns a 64-bit hex string; None when the image cannot be decoded.
+    No third-party fallback: callers degrade to sha256 + dimensions.
+    """
+    try:
+        from PIL import Image
+    except Exception:
+        return None
+    try:
+        with Image.open(path) as img:
+            img = img.convert("L").resize((9, 8), Image.Resampling.LANCZOS)
+            pixels = list(img.getdata())
+        bits = 0
+        for row in range(8):
+            for col in range(8):
+                left = pixels[row * 9 + col]
+                right = pixels[row * 9 + col + 1]
+                bits = (bits << 1) | (1 if left > right else 0)
+        return f"{bits:016x}"
+    except Exception:
+        return None
+
+
+def hamming_distance(a: str, b: str) -> int:
+    try:
+        x, y = int(a, 16), int(b, 16)
+    except (TypeError, ValueError):
+        return 999
+    return bin(x ^ y).count("1")
+
+
+# Near-identical threshold (plan §5.5: dHash 汉明距离 ≤ 4 起步)
+DHASH_DUP_THRESHOLD = 4
+
+
 def sha256_of(path: Path) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -116,6 +153,7 @@ def run(
 
     # ── Deterministic track ──
     seen_hashes: dict[str, str] = {}
+    seen_dhashes: list[tuple[str, str]] = []  # (dhash, evidence_id)
     for ev in evidence_items:
         if not isinstance(ev, dict):
             continue
@@ -128,14 +166,30 @@ def run(
             assessed.append(item)
             continue
         sha = sha256_of(file_path)
+        dhash = perceptual_hash(file_path)
+        item["_dhash"] = dhash
         if sha in seen_hashes:
             errors.append(
                 f"V-DET: 截图重复（与 {seen_hashes[sha]} 内容相同）: {item.get('file_path')}"
             )
             item["_deterministic"] = {"duplicate": True}
+        elif dhash:
+            dup = False
+            for other_hash, other_id in seen_dhashes:
+                if hamming_distance(dhash, other_hash) <= DHASH_DUP_THRESHOLD:
+                    errors.append(
+                        f"V-DET: 截图近似重复（与 {other_id} 感知哈希距离 ≤ {DHASH_DUP_THRESHOLD}）: "
+                        f"{item.get('file_path')}"
+                    )
+                    item["_deterministic"] = {"duplicate": True, "near_duplicate_of": other_id}
+                    dup = True
+                    break
+            if not dup:
+                seen_dhashes.append((dhash, item.get("evidence_id", item.get("file_path", ""))))
+                item["_deterministic"] = {"duplicate": False}
         else:
             seen_hashes[sha] = item.get("file_path", "")
-            item["_deterministic"] = {"duplicate": False}
+            item["_deterministic"] = {"duplicate": False, "perceptual": "unavailable"}
         dims = parse_image_dimensions(file_path)
         if dims and (dims[0] < 400 or dims[1] < 300):
             warnings.append(f"V-WARN: 截图尺寸偏小 {dims[0]}x{dims[1]}: {item.get('file_path')}")
@@ -230,6 +284,19 @@ def run(
         if ev.get("privacy_scrubbed") is False and ev.get("acquisition_status") == "acquired":
             errors.append(f"V5: 视觉证据 {ev.get('evidence_id')} 未声明已脱敏")
 
+    # V7 (declaration-first): every required core feature must have at least
+    # one non-pending visual evidence item — the declaration list is a
+    # planning-gate artifact, all-pending means screenshots were never taken.
+    for f in required_features:
+        mapped_ids = f.get("visual_evidence") or []
+        mapped_evs = [e for e in assessed if e.get("evidence_id") in mapped_ids]
+        non_pending = [e for e in mapped_evs if e.get("acquisition_status") != "pending"]
+        if mapped_evs and not non_pending:
+            errors.append(
+                f"V7: 功能 {f.get('feature_id')}（{f.get('name')}）的视觉证据全部 pending，"
+                "请先补拍截图（或逐条豁免）再进入文档生成"
+            )
+
     report = {
         "schema_version": 1,
         "status": "pass" if not errors else "blocked",
@@ -242,6 +309,8 @@ def run(
         "cache_file": str(cache_path),
         "model": "deepseek-v4-flash-vision-exp",
     }
+    # Persist the gate report (single source of truth for visual gate)
+    write_json(plan_path.parent / REPORT_FILE, report)
     return report
 
 
