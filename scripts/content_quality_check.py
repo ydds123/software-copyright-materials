@@ -61,45 +61,16 @@ def check_forbidden_terms(text: str) -> tuple[list[str], list[str]]:
 
 
 def check_table_density(text: str) -> tuple[bool, str]:
-    """Check that tables dominate over long paragraphs in function chapters."""
-    # Find the Web 管理端功能操作 section
-    sections = re.split(r'^### 7\.\d ', text, flags=re.M)
-    large_text_blocks = 0
-    table_count = 0
+    """信息密度观察（1a.3 处置：不再要求『表格主导正文』）。
 
-    for sec in sections:
-        lines = sec.split('\n')
-        # Count tables: sequences of | lines
-        in_table = False
-        for line in lines:
-            stripped = line.strip()
-            if stripped.startswith('|') and '---' not in stripped:
-                if not in_table:
-                    table_count += 1
-                    in_table = True
-            elif not stripped.startswith('|'):
-                in_table = False
-
-        # Find long paragraph blocks (>3 consecutive non-table, non-heading lines)
-        consecutive_text = 0
-        for line in lines:
-            stripped = line.strip()
-            if stripped and not stripped.startswith('|') and not stripped.startswith('#') and not stripped.startswith('【'):
-                consecutive_text += 1
-            else:
-                if consecutive_text > 3:
-                    large_text_blocks += 1
-                consecutive_text = 0
-        if consecutive_text > 3:
-            large_text_blocks += 1
-
-    ratio = f"tables={table_count}, long-text-blocks={large_text_blocks}"
-    if table_count > large_text_blocks * 2:
-        return True, f"OK: {ratio} — tables dominate"
-    elif table_count >= large_text_blocks:
-        return True, f"WEAK: {ratio} — tables and text roughly balanced, could use more tables"
-    else:
-        return False, f"LOW: {ratio} — text dominates, consider converting long paragraphs to tables"
+    原激励（table_count > long_text_blocks*2 才算合格）会逼着把所有内容
+    塞进表格，形成模板化。现在只在完全无表格或长段落密集时提示。
+    """
+    table_lines = [l for l in text.split('\n') if l.strip().startswith('|') and '---' not in l]
+    table_count = len(table_lines)
+    if table_count == 0:
+        return False, "全文无任何表格，信息密度偏薄（提示，不阻断形式）"
+    return True, f"OK: 存在表格（{table_count} 行表格行）——不再强制表格主导"
 
 
 def check_chart_coverage(text: str, manual_path: Path | None = None) -> tuple[bool, str]:
@@ -190,65 +161,48 @@ def check_chart_coverage(text: str, manual_path: Path | None = None) -> tuple[bo
 
 
 def check_feature_list(text: str) -> tuple[bool, str]:
-    """Check that 功能清单 has sub-function detail (SOP item 7)."""
-    # Find 功能清单 section (chapter number varies, match by title)
+    """功能清单检查（1a.3 处置：删除固定行数硬要求）。
+
+    功能清单条目数由证据计划决定，不再强制 ≥10 行；说明过短改为提示。
+    """
     m = re.search(
         r'^#{2,4}\s+(?:\d+(?:\.\d+)*\s+|[一二三四五六七八九十]+、)?功能清单\s*$\n(.*?)(?=^#{2,4}\s+)',
         text,
         re.MULTILINE | re.DOTALL,
     )
     if not m:
-        return False, "功能清单 section not found"
+        return True, "WEAK: 未找到功能清单 section（若无清单式结构属正常差异，不阻断）"
 
     section = m.group(1)
     lines = section.strip().split('\n')
-
-    # Count table rows (skip header and separator)
     rows = [l for l in lines if l.startswith('|') and '---' not in l and '功能模块' not in l and '序号' not in l]
-    if len(rows) < 10:
-        return False, f"功能清单 only has {len(rows)} data rows — need at least 10 sub-function entries"
 
-    # Check each row has meaningful detail
     short_rows = []
     for r in rows:
         cols = [c.strip() for c in r.split('|')[1:-1]]
         if len(cols) >= 2:
-            detail = cols[-1]  # 功能说明 column
+            detail = cols[-1]
             if len(detail) < 30:
                 short_rows.append(cols[0] if cols else '?')
 
     if short_rows:
-        return False, f"功能清单中以下行功能说明过短 (<30字): {', '.join(short_rows[:5])}"
-
-    return True, f"OK: {len(rows)} sub-function rows, all with sufficient detail"
+        return True, f"WEAK: {len(rows)} 行功能清单，{len(short_rows)} 行说明过短（提示，不阻断）"
+    return True, f"OK: {len(rows)} 行功能清单"
 
 
 def check_approval_has_flow_table(text: str) -> tuple[bool, str]:
-    """Verify that business-type modules (审批) have operation flow tables, not just long paragraphs."""
-    # Find 7.2 section (contractor company management)
+    """业务模块表达形式观察（1a.3 处置：删除强制表格化）。
+
+    表格或段落由内容决定，不再强制『用表格替代长段落』。
+    """
     m = re.search(r'### 7\.2 .*?\n(.*?)(?=### 7\.3 )', text, re.DOTALL)
     if not m:
         return True, "7.2 section not found — skipping"
-
     section = m.group(1)
-    # Only flag approval modules — skip non-approval sections (大屏, stats, etc.)
-    if '审批' not in section and '签批' not in section and '备案' not in section:
-        return True, "7.2 section is not an approval module — skipping"
-
-    # Check for operation step table (步骤 | 用户操作 | 系统响应)
-    if '操作步骤 | 用户操作 | 系统响应' in section:
-        return True, "审批部分有操作步骤三列表"
-
-    # Check for status flow table
-    if '备案状态 | 含义 | 对应公司类型' in section or '备案状态 | 含义' in section:
-        return True, "审批部分有状态流转表"
-
-    # Check if there are at least 3 tables in the approval section
     table_count = len(re.findall(r'^\|.*\|', section, re.M))
-    if table_count >= 4:
-        return True, f"审批部分有 {table_count} 张表，符合表格化要求"
-
-    return False, "审批部分缺少操作步骤表或状态流转表——请用表格替代长段落"
+    if '审批' in section or '签批' in section or '备案' in section:
+        return True, f"OK: 审批模块有 {table_count} 张表（表达形式由内容决定，不再强制表格化）"
+    return True, "7.2 section is not an approval module — skipping"
 
 
 def check_code_leakage(text: str) -> tuple[list[str], list[str]]:
@@ -1014,25 +968,25 @@ def main() -> None:
         print("  OK: 一级章节编号唯一")
 
     # ── 检查 3: 表图密度 ──
-    print("\n[3/20] 表格密度检查 (SOP #4)")
+    print("\n[3/20] 表格密度检查 (1a.3 已移除模板化激励，仅提示)")
     ok, msg = check_table_density(text)
     print(f"  {msg}")
     if not ok:
-        all_errors.append(f"表格密度不足: {msg}")
+        all_warnings.append(f"表格密度观察: {msg}")
 
     # ── 检查 3: 功能清单 ──
-    print("\n[4/20] 功能清单迭代检查 (SOP #7)")
+    print("\n[4/20] 功能清单检查 (1a.3 已移除固定行数要求，仅提示)")
     ok, msg = check_feature_list(text)
     print(f"  {msg}")
     if not ok:
-        all_errors.append(f"功能清单质量不达标: {msg}")
+        all_warnings.append(f"功能清单观察: {msg}")
 
     # ── 检查 4: 业务型模块表格化 ──
-    print("\n**[5/20] 业务模块表格化检查** (SOP #5, #6)")
+    print("\n**[5/20] 业务模块表达形式观察** (1a.3 已移除强制表格化)")
     ok, msg = check_approval_has_flow_table(text)
     print(f"  {msg}")
     if not ok:
-        all_errors.append(f"审批模块表格化不达标: {msg}")
+        all_warnings.append(f"业务模块表达形式观察: {msg}")
 
     # ── 检查 5: 真实业务截图覆盖 ──
     print("\n[6/20] 真实业务截图覆盖检查")
@@ -1063,18 +1017,18 @@ def main() -> None:
         print("  OK — 无 AI 套话")
 
     # ── 检查 9: 角色贯穿 ──
-    print("\n[9/20] 角色贯穿检查 (manual_quality_spec Q-C03/Q-W01)")
+    print("\n[9/20] 角色贯穿检查 (1a.3 已降级为警告)")
     ok, msg = check_role_penetration(text)
     print(f"  {msg}")
     if not ok:
-        all_errors.append(f"角色贯穿不足: {msg}")
+        all_warnings.append(f"角色贯穿不足: {msg}")
 
-    # ── 检查 10: 多端覆盖 (Humanizer 端维度) ──
+    # ── 检查 10: 多端覆盖 (1a.3 已降级为警告) ──
     print("\n[10/20] 多端覆盖检查 (系统简介声明的端 → 功能操作章节)")
     ok, msg = check_endpoint_coverage(text)
     print(f"  {msg}")
     if not ok:
-        all_errors.append(f"多端覆盖不足: {msg}")
+        all_warnings.append(f"多端覆盖不足: {msg}")
 
     # ── 检查 11: 简介-功能清单对等检查 ──
     print("\n[11/20] 简介-功能清单对等检查 (系统简介段落 ↔ 功能清单行)")

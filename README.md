@@ -75,6 +75,22 @@ DOCX 基础设施层
 python -m pip install python-docx
 ```
 
+### 可选外部依赖（安装时自动检测）
+
+运行依赖检测与自动安装：
+
+```powershell
+python <skill目录>/scripts/install_dependencies.py --check   # 只检查
+python <skill目录>/scripts/install_dependencies.py --install # 自动安装缺失项
+```
+
+| 依赖 | 用途 | 缺失时行为 | 安装方式 |
+|---|---|---|---|
+| human-writing | 文风风险检查（模型化文风形状，非 AI 判定） | 报告缺失并提示安装，不静默放行 | 自动 git clone 至 `~/.agents/skills/human-writing`（可用 `HUMAN_WRITING_SKILL_DIR` 覆盖） |
+| DeepSeek 视觉模型 | 视觉证据语义判定（页面类型/真实数据/疑似设计稿） | 视觉门禁降级为确定性检查 + 人工提示 | 设置环境变量 `DEEPSEEK_API_KEY`；可用 `DEEPSEEK_VISION_MODEL` / `DEEPSEEK_BASE_URL` 覆盖默认模型与端点 |
+
+两项均为可选：不安装时核心流程（证据计划、三分法、逻辑一致性、批次结构、提交就绪）完全可用，仅相关增强门禁降级。
+
 ### 飞书 CLI 安装与配置
 
 飞书技术图表功能按两步检查：

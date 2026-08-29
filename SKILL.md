@@ -186,10 +186,13 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/init_task.py \
 检查运行能力：
 
 ```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/install_dependencies.py --check
 python3 ${CLAUDE_SKILL_DIR}/scripts/check_environment.py \
   --out-dir <任务根目录>/<软著名称> \
   --feishu-doc "<可编辑的飞书在线文档 URL 或 token>"
 ```
+
+依赖检查会报告两项可选外部依赖（human-writing 文风检查器、DeepSeek 视觉模型 key）：缺失时提示安装命令（`--install` 自动安装 human-writing），相关门禁降级为确定性检查 + 人工提示，不静默放行。
 
 **⛔ 禁止在用户未明确要求时添加 `--skip-feishu`。** 即 lark-cli 检查结果为不可用，也必须先向用户报告、STOP_FOR_USER、等待用户选择。只有用户明确说"跳过飞书/不用飞书/不生成图表"时，才能改用 `--skip-feishu` 重新运行环境检查。
 
@@ -595,6 +598,48 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/confirm_stage.py --workdir <任务目录> --
 ```
 
 未确认 `manual` 门禁前，不得开始代码选择或代码抽取。
+
+### 6b. 材料证据计划（v2 增强路径，可选）
+
+> 场景：需要严格代表性管控时启用（例如收到“模板化程度较高”的补正通知后重新提交）。legacy 任务不生成计划则不受影响。
+
+材料证据计划是选材层的唯一真相来源：扫描全部输入根（支持前后端多仓库），为每个代码候选记录等级信号（CRUD 六件套/纯 API/纯 POJO/责任链/策略/动态 SQL）、署名风险（三分法：framework/ai_tool/team_member）、哈希，并建立功能→代码证据映射。
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/propose_evidence_plan.py \
+  --project <主源码根> \
+  --extra-roots backend:<后端仓库路径> frontend:<前端仓库路径> \
+  --business-context 草稿/业务理解.json \
+  --software-name "<软件全称>" \
+  --version "<版本号>" \
+  --team-members <团队成员署名>... \
+  --out-dir 草稿
+```
+
+输出：`草稿/材料证据计划.json`（机器真相）与 `草稿/材料证据计划.md`（人工阅读版，含署名风险表）。
+
+模型补全计划（selected / grade / source_kind / selection_reason / author_declaration.resolution）后，先跑校验：
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/evidence_plan_check.py --plan 草稿/材料证据计划.json
+```
+
+硬规则（不通过则不得继续）：
+
+- 每个核心功能必须有 selected 且非 D 级的代码证据（映射完整率 100%）
+- 选中证据中必须有 A/B 级文件
+- framework 署名文件禁止 `resolution=replace`（情况一），只能 exclude 或人工核实
+- 选中文件必须存在且哈希与计划一致
+
+用户确认后：
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/confirm_stage.py \
+  --workdir <任务目录> --stage material-plan \
+  --note "<用户确认内容>" --confirm
+```
+
+确认会绑定计划哈希：**确认后修改计划，所有下游确认（code-selection、markdown、正式件构建）自动失效**，必须重新校验并确认。抽取时直接以计划为驱动（`--selection 草稿/材料证据计划.json`），支持文件内行段（line_range），抽取时校验哈希与范围。
 
 ### 7. 确认代码文件选择（基于操作手册模块）
 

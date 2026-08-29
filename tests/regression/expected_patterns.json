@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "description": "回归期望标签：每个 fixture 文件的预期判定。合成样本按真实补正报告中的模式抽象，不含真实项目内容。",
+  "cases": [
+    {
+      "file": "fixtures/boilerplate_case/backend/InsAbnormalReportController.java",
+      "expected_grade": "D",
+      "expected_signals": ["generator_author_tag", "crud_six_piece", "zero_business_logic"],
+      "expected_source_kind": "generated",
+      "note": "同构 CRUD 六件套 + 框架作者署名，模板化元凶"
+    },
+    {
+      "file": "fixtures/boilerplate_case/backend/InsPendingHiddenDangerController.java",
+      "expected_grade": "D",
+      "expected_signals": ["generator_author_tag", "crud_six_piece", "zero_business_logic", "structural_clone"],
+      "expected_source_kind": "generated",
+      "note": "与前文件仅类名不同，应被识别为同构文件簇成员"
+    },
+    {
+      "file": "fixtures/boilerplate_case/backend/InspectionPointController.java",
+      "expected_grade": "D",
+      "expected_signals": ["generator_author_tag", "crud_six_piece", "zero_business_logic", "structural_clone"],
+      "expected_source_kind": "generated",
+      "note": "同构文件簇第三成员，材料主体占比判定应因此受罚"
+    },
+    {
+      "file": "fixtures/boilerplate_case/frontend/api/ticketAlarm/index.ts",
+      "expected_grade": "D",
+      "expected_signals": ["pure_api_wrapper", "structural_clone"],
+      "expected_source_kind": "first_party",
+      "note": "纯 HTTP 请求封装，无业务特征"
+    },
+    {
+      "file": "fixtures/boilerplate_case/frontend/api/alarmCenter/index.ts",
+      "expected_grade": "D",
+      "expected_signals": ["pure_api_wrapper", "structural_clone"],
+      "expected_source_kind": "first_party",
+      "note": "与 ticketAlarm 同构的 API 封装"
+    },
+    {
+      "file": "fixtures/boilerplate_case/backend/MwAlarmRecord.java",
+      "expected_grade": "D",
+      "expected_signals": ["pure_pojo"],
+      "expected_source_kind": "first_party",
+      "note": "纯字段实体类，数据结构声明不是算法"
+    },
+    {
+      "file": "fixtures/boilerplate_case/backend/ImmediatePushAndAssignHandler.java",
+      "expected_grade": "A",
+      "expected_signals": ["responsibility_chain", "business_branch", "strategy_factory_call"],
+      "expected_source_kind": "first_party",
+      "note": "责任链具体实现 + 真实业务条件判断，最有独创性的 Java 代码"
+    },
+    {
+      "file": "fixtures/boilerplate_case/backend/AlarmCenterServiceImpl.java",
+      "expected_grade": "A",
+      "expected_signals": ["lifecycle_management", "multi_tenant", "template_placeholder", "scheduled_refresh"],
+      "expected_source_kind": "first_party",
+      "note": "@PostConstruct/@PreDestroy 生命周期 + 多租户遍历推送 + 占位符替换"
+    },
+    {
+      "file": "fixtures/boilerplate_case/backend/mapper/AlarmMapper.xml",
+      "expected_grade": "A",
+      "expected_signals": ["dynamic_sql", "multi_table_join", "foreach"],
+      "expected_source_kind": "first_party",
+      "note": "复杂动态 SQL 是极强的独创性证据"
+    },
+    {
+      "file": "fixtures/simple_original_case/meeting_signin.py",
+      "expected_grade": "B",
+      "expected_signals": ["domain_rule", "custom_validation", "real_business_flow"],
+      "expected_source_kind": "first_party",
+      "note": "简单原创软件：无复杂算法，但含真实领域约束（时段校验、重复签到、迟到状态流转），应能通过代表性检查"
+    },
+    {
+      "file": "fixtures/visual/defect_cases.json",
+      "expected_grade": null,
+      "expected_signals": ["visual_defect_scenarios"],
+      "expected_source_kind": "fixture_manifest",
+      "note": "视觉证据缺陷场景清单，供 1a.2 视觉证据门禁测试引用"
+    }
+  ]
+}

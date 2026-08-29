@@ -112,10 +112,13 @@ def operation_flow_steps(value: Any) -> list[str]:
 
 
 DEFAULT_TEMPLATE_QUALITY = {
-    "min_chars": 15000,
-    "min_headings": 20,
-    "min_table_lines": 50,
-    "min_screenshot_slots_without_images": 7,
+    # 1b 处置：固定篇幅/结构激励已关闭（0 = 不强制）。
+    # 旧值（15000 字 / 20 标题 / 50 表格行 / 7 截图占位）会引导凑字数、凑表格、
+    # 凑标题，形成模板化。篇幅与结构由证据计划决定；需要时可在任务配置中显式开启。
+    "min_chars": 0,
+    "min_headings": 0,
+    "min_table_lines": 0,
+    "min_screenshot_slots_without_images": 0,
     "require_cover": False,
     "require_toc": False,
     "require_login_section": True,

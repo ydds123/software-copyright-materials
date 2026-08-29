@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.alarm.mapper.MwAlarmRecordMapper">
+
+    <resultMap id="AlarmRecordMap" type="MwAlarmRecord">
+        <id property="id" column="id"/>
+        <result property="pointName" column="point_name"/>
+        <result property="alarmLevel" column="alarm_level"/>
+        <result property="status" column="status"/>
+    </resultMap>
+
+    <select id="selectPageList" parameterType="MwAlarmRecordQuery" resultMap="AlarmRecordMap">
+        SELECT r.*, p.point_name, u.user_name
+        FROM mw_alarm_record r
+        LEFT JOIN ins_inspection_point p ON r.point_id = p.id
+        LEFT JOIN sys_user u ON r.push_user_id = u.id
+        <where>
+            <if test="query.alarmLevel != null">
+                AND r.alarm_level = #{query.alarmLevel}
+            </if>
+            <if test="query.status != null">
+                AND r.status = #{query.status}
+            </if>
+            <if test="query.pointName != null and query.pointName != ''">
+                AND p.point_name LIKE CONCAT('%', #{query.pointName}, '%')
+            </if>
+            <if test="query.startTime != null and query.endTime != null">
+                AND r.create_time BETWEEN #{query.startTime} AND #{query.endTime}
+            </if>
+            <foreach collection="query.deptIds" item="deptId" open="AND r.dept_id IN (" close=")" separator=",">
+                #{deptId}
+            </foreach>
+        </where>
+        ORDER BY r.create_time DESC
+    </select>
+</mapper>

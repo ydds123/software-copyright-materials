@@ -101,10 +101,48 @@ def load_selected_files(project: Path, selection_path: Path | None) -> list[dict
     if selection_path is None:
         raise SystemExit(
             "STOP_FOR_USER\n"
-            "NEXT_ACTION: 代码抽取必须先使用 propose_code_selection.py 生成并确认 草稿/代码文件选择.json。"
+            "NEXT_ACTION: 代码抽取必须先使用 propose_code_selection.py 生成并确认 草稿/代码文件选择.json，"
+            "或使用 propose_evidence_plan.py 生成并确认 草稿/材料证据计划.json。"
         )
 
     data = read_json(selection_path)
+
+    # ── v2: material evidence plan drives extraction ──
+    if data.get("schema_version") == 3 and isinstance(data.get("code_evidence"), list):
+        gate_file = selection_path.parent.parent / "门禁状态.json"
+        gate_confirmed = False
+        if gate_file.exists():
+            try:
+                gates = read_json(gate_file)
+                gate_confirmed = gates.get("material-plan", {}).get("confirmed", False)
+            except Exception:
+                pass
+        if not gate_confirmed:
+            raise SystemExit(
+                "STOP_FOR_USER\n"
+                "NEXT_ACTION: 材料证据计划尚未确认。请先运行 evidence_plan_check.py 并确认 material-plan 门禁。"
+            )
+        roots = {r.get("root_id", "primary"): Path(r["path"]) for r in data.get("input_roots") or []}
+        selected = []
+        for item in data["code_evidence"]:
+            if not isinstance(item, dict) or not item.get("selected"):
+                continue
+            root_id = item.get("root_id", "primary")
+            root = roots.get(root_id)
+            if root is None:
+                raise SystemExit(f"计划中的输入根不存在: {root_id}")
+            selected.append(
+                {
+                    "path": str(item.get("path", "")),
+                    "selected": True,
+                    "project": root,
+                    "line_range": item.get("line_range"),
+                    "sha256": item.get("sha256", ""),
+                }
+            )
+        return selected
+
+    # ── legacy v1: 代码文件选择.json ──
     # Check gate: old inline user_confirmed or new 门禁状态.json
     gate_file = selection_path.parent.parent / "门禁状态.json"
     gate_confirmed = False
@@ -136,9 +174,21 @@ def load_selected_files(project: Path, selection_path: Path | None) -> list[dict
             {
                 "path": str(path_value),
                 "selected": True,
+                "project": project,
+                "line_range": item.get("line_range"),
+                "sha256": item.get("sha256", ""),
             }
         )
     return selected
+
+
+def _sha256_of(path: Path) -> str:
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def collect_code_lines(project: Path, selection_path: Path | None) -> tuple[list[str], list[dict[str, Any]]]:
@@ -147,29 +197,43 @@ def collect_code_lines(project: Path, selection_path: Path | None) -> tuple[list
     manifest_files: list[dict[str, Any]] = []
 
     for item in selected_items:
-        path = (project / item["path"]).resolve()
+        item_project = item.get("project") or project
+        path = (item_project / item["path"]).resolve()
         try:
-            path.relative_to(project.resolve())
+            path.relative_to(item_project.resolve())
         except ValueError:
             raise SystemExit(f"Selected file is outside project: {path}")
         if should_skip_file(path):
             continue
+        if item.get("sha256") and _sha256_of(path) != item["sha256"]:
+            raise SystemExit(
+                f"STOP_FOR_USER\n文件哈希与计划不一致（文件已被修改）: {item['path']}\n"
+                "请重新生成或确认材料证据计划。"
+            )
         text = read_text(path)
         source_lines = text.splitlines()
-        selected_lines = source_lines
+        line_range = item.get("line_range")
+        if isinstance(line_range, list) and len(line_range) == 2:
+            start_line, end_line = int(line_range[0]), int(line_range[1])
+            if start_line < 1 or end_line > len(source_lines) or start_line > end_line:
+                raise SystemExit(f"行段超出文件范围: {item['path']} {line_range}")
+            selected_lines = source_lines[start_line - 1 : end_line]
+        else:
+            start_line, end_line = 1, len(source_lines)
+            selected_lines = source_lines
         start = len(all_lines) + 1
-        marker = marker_for(path, project)
+        marker = marker_for(path, item_project)
         all_lines.append(marker)
         all_lines.extend(selected_lines)
         all_lines.append("")
         end = len(all_lines)
-        source_end_line = len(source_lines)
         manifest_files.append(
             {
-                "path": rel(path, project),
+                "path": rel(path, item_project),
+                "sha256": _sha256_of(path),
                 "source_line_count": len(source_lines),
-                "selected_line_start": 1,
-                "selected_line_end": source_end_line,
+                "selected_line_start": start_line,
+                "selected_line_end": end_line,
                 "selected_line_count": len(selected_lines),
                 "material_line_start": start,
                 "material_line_end": end,

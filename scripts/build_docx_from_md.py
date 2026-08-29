@@ -192,6 +192,21 @@ def confirmation_issues(workdir: Path) -> list[str]:
 
     gates = read_json_if_exists(workdir / "门禁状态.json")
 
+    # ── 1a.3: v2 material-plan guard (only when a plan exists) ──
+    plan_path = draft_dir / "材料证据计划.json"
+    if plan_path.exists():
+        entry = gates.get("material-plan", {})
+        if not entry.get("confirmed"):
+            issues.append("材料证据计划尚未确认：请运行 evidence_plan_check.py 并确认 material-plan 门禁")
+        else:
+            import hashlib as _hashlib
+            h = _hashlib.sha256()
+            with open(plan_path, "rb") as f:
+                for chunk in iter(lambda: f.read(65536), b""):
+                    h.update(chunk)
+            if entry.get("artifact_sha256") and h.hexdigest() != entry["artifact_sha256"]:
+                issues.append("材料证据计划在确认后被修改，请重新确认 material-plan 门禁")
+
     if not gates.get("business", {}).get("confirmed"):
         issues.append("业务理解尚未确认：请确认 草稿/业务理解.md 后记录 business 门禁")
 

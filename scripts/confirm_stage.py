@@ -9,6 +9,7 @@ are consolidated into this one file.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -18,6 +19,15 @@ from typing import Any
 from common import confirm_params, read_json, resolve_workdir, write_json
 
 GATE_FILE = "门禁状态.json"
+MATERIAL_PLAN_FILE = "材料证据计划.json"
+
+
+def _sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def timestamp() -> str:
@@ -61,7 +71,60 @@ def confirm_business(workdir: Path, note: str) -> Path:
     return write_gate(workdir, "business", note)
 
 
+def _material_plan_guard(workdir: Path) -> None:
+    """v2 guard: when a material evidence plan exists it must be confirmed
+    and unchanged since confirmation (invalidation propagation)."""
+    plan_path = workdir / "草稿" / MATERIAL_PLAN_FILE
+    if not plan_path.exists():
+        return  # legacy v1 task without a plan — no guard
+    gates = load_gates(workdir)
+    entry = gates.get("material-plan", {})
+    if not entry.get("confirmed"):
+        raise SystemExit(
+            "STOP_FOR_USER\n"
+            "NEXT_ACTION: 检测到材料证据计划，必须先确认 material-plan 门禁。\n"
+            "先运行 evidence_plan_check.py 校验，通过后由用户运行：\n"
+            "confirm_stage.py --stage material-plan --note \"...\" --confirm"
+        )
+    recorded = entry.get("artifact_sha256", "")
+    if recorded and _sha256(plan_path) != recorded:
+        raise SystemExit(
+            "STOP_FOR_USER\n"
+            "NEXT_ACTION: 材料证据计划在确认后被修改，原确认已失效。\n"
+            "请重新运行 evidence_plan_check.py 并重新确认 material-plan 门禁。"
+        )
+
+
+def confirm_material_plan(workdir: Path, note: str) -> Path:
+    """Confirm the material evidence plan after evidence_plan_check passes."""
+    plan_path = workdir / "草稿" / MATERIAL_PLAN_FILE
+    if not plan_path.exists():
+        raise SystemExit("Missing 草稿/材料证据计划.json")
+    checker = Path(__file__).resolve().parent / "evidence_plan_check.py"
+    result = subprocess.run(
+        [sys.executable, str(checker), "--plan", str(plan_path)],
+        capture_output=True,
+        text=True,
+    )
+    print(result.stdout, end="")
+    if result.stderr:
+        print(result.stderr, end="", file=sys.stderr)
+    if result.returncode != 0:
+        raise SystemExit(
+            "STOP_FOR_USER\n"
+            "NEXT_ACTION: evidence_plan_check 未通过（见上方输出）。请修复计划后重新运行。"
+        )
+    return write_gate(
+        workdir,
+        "material-plan",
+        note,
+        artifact=MATERIAL_PLAN_FILE,
+        artifact_sha256=_sha256(plan_path),
+    )
+
+
 def confirm_code_selection(workdir: Path, note: str) -> Path:
+    _material_plan_guard(workdir)
     path = workdir / "草稿/代码文件选择.json"
     if not path.exists():
         raise SystemExit("Missing 草稿/代码文件选择.json")
@@ -255,6 +318,7 @@ def confirm_diagrams(workdir: Path, note: str) -> Path:
 
 
 def confirm_markdown(workdir: Path, note: str) -> Path:
+    _material_plan_guard(workdir)
     gates = load_gates(workdir)
     gate_names = ["business", "manual", "content-quality", "code-selection", "screenshot-method", "application-fields"]
     gate_labels = {
@@ -313,6 +377,7 @@ def main() -> None:
         required=True,
         choices=[
             "environment", "project", "business", "code-selection",
+            "material-plan",
             "screenshot-method", "application-fields", "markdown",
             "content-quality", "manual", "diagrams",
         ],
@@ -342,6 +407,8 @@ def main() -> None:
         path = confirm_project(workdir, args.note)
     elif args.stage == "business":
         path = confirm_business(workdir, args.note)
+    elif args.stage == "material-plan":
+        path = confirm_material_plan(workdir, args.note)
     elif args.stage == "code-selection":
         path = confirm_code_selection(workdir, args.note)
     elif args.stage == "screenshot-method":
