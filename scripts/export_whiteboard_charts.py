@@ -55,7 +55,7 @@ def update_manual_references(text: str, charts: list[Chart]) -> str:
         stem = Path(path.replace("\\", "/")).stem
         for name, safe in names.items():
             if stem == name or stem.startswith(name + "-"):
-                return f"{prefix}截图/{safe}.png{suffix}"
+                return f"{prefix}../截图/{safe}.png{suffix}"
         return match.group(0)
 
     return IMAGE_REF_RE.sub(replace, text)
@@ -87,7 +87,7 @@ def update_chart_list(text: str, charts: list[Chart]) -> str:
                 url_idx = next(i for i, c in enumerate(cells) if "whiteboard/" in c)
                 cells = cells[: url_idx + 1]
                 safe = safe_filename(chart.name)
-                cells.extend([f"截图/{safe}.svg", f"截图/{safe}.png"])
+                cells.extend([f"../截图/{safe}.svg", f"../截图/{safe}.png"])
                 out.append("| " + " | ".join(cells) + " |")
                 continue
         else:

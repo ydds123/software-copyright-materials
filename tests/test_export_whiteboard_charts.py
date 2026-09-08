@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
+from build_docx_from_md import resolve_manual_image
+from content_quality_check import check_login_and_homepage
 from export_whiteboard_charts import parse_chart_rows, update_chart_list, update_manual_references
 
 
@@ -33,8 +36,8 @@ class ExportWhiteboardChartsTest(unittest.TestCase):
         result = update_chart_list(SAMPLE, charts)
         self.assertIn("SVG源文件", result)
         self.assertIn("Word图片", result)
-        self.assertIn("截图/系统架构图.svg | 截图/系统架构图.png", result)
-        self.assertIn("截图/区域管理操作流程.svg | 截图/区域管理操作流程.png", result)
+        self.assertIn("../截图/系统架构图.svg | ../截图/系统架构图.png", result)
+        self.assertIn("../截图/区域管理操作流程.svg | ../截图/区域管理操作流程.png", result)
         self.assertNotIn("系统架构图.jpg", result)
 
     def test_update_chart_list_is_idempotent(self):
@@ -47,8 +50,35 @@ class ExportWhiteboardChartsTest(unittest.TestCase):
         charts = parse_chart_rows(SAMPLE)
         manual = "![系统架构图](截图/系统架构图-自适应-白底-2400.png)\n![区域管理操作流程](截图/区域管理操作流程.jpg)\n"
         result = update_manual_references(manual, charts)
-        self.assertIn("![系统架构图](截图/系统架构图.png)", result)
-        self.assertIn("![区域管理操作流程](截图/区域管理操作流程.png)", result)
+        self.assertIn("![系统架构图](../截图/系统架构图.png)", result)
+        self.assertIn("![区域管理操作流程](../截图/区域管理操作流程.png)", result)
+
+    def test_manual_image_resolves_from_markdown_directory(self):
+        with tempfile.TemporaryDirectory() as td:
+            task = Path(td)
+            draft = task / "草稿"
+            shots = task / "截图"
+            draft.mkdir()
+            shots.mkdir()
+            image = shots / "系统架构图.png"
+            image.write_bytes(b"png")
+            self.assertEqual(resolve_manual_image(draft, "../截图/系统架构图.png"), image.resolve())
+
+    def test_manual_image_keeps_legacy_task_root_fallback(self):
+        with tempfile.TemporaryDirectory() as td:
+            task = Path(td)
+            draft = task / "草稿"
+            shots = task / "截图"
+            draft.mkdir()
+            shots.mkdir()
+            image = shots / "系统架构图.png"
+            image.write_bytes(b"png")
+            self.assertEqual(resolve_manual_image(draft, "截图/系统架构图.png"), image.resolve())
+
+    def test_login_check_accepts_sibling_user_screenshot(self):
+        text = "## 1 系统登录\n\n![系统登录界面](../用户截图/登录页面.png)\n"
+        ok, message = check_login_and_homepage(text)
+        self.assertTrue(ok, message)
 
 
 if __name__ == "__main__":

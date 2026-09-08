@@ -79,7 +79,7 @@ def check_chart_coverage(text: str, manual_path: Path | None = None) -> tuple[bo
     Technical diagrams and real screenshots are optional supporting material.
     When screenshots are skipped, clear placeholders remain acceptable.
     """
-    images = re.findall(r'!\[[^\]]*\]\(截图/[^)]+\)', text)
+    images = re.findall(r'!\[[^\]]*\]\((?:\.\./)?(?:截图|用户截图)/[^)]+\)', text)
     placeholders = re.findall(r'【截图预留：[^】]+】', text)
     if not images and not placeholders:
         return False, "没有真实业务截图或清晰的截图预留"
@@ -148,17 +148,19 @@ def check_chart_coverage(text: str, manual_path: Path | None = None) -> tuple[bo
             f"——每个含表单的模块应至少有一张表单截图（紧接字段表之后）"
         )
 
-    # Phase 2: verify PNG files exist on disk
+    # Phase 2: verify every image using standard Markdown-relative path semantics.
+    # Do not search by filename across sibling tasks: generic names such as 系统架构图.png collide easily.
     if manual_path and manual_path.exists():
-        screenshot_dir = manual_path.parent.parent / "截图"
-        if screenshot_dir.exists():
-            for img_ref in images:
-                filename = img_ref.split('/')[-1].rstrip(')')
-                png_path = screenshot_dir / filename
-                if not png_path.exists():
-                    return False, f"图表文件缺失: 截图/{filename}（Markdown 中有引用但文件不存在）"
-                if png_path.stat().st_size == 0:
-                    return False, f"图表文件为空: 截图/{filename}"
+        for img_ref in images:
+            match = re.search(r'\(([^)]+)\)', img_ref)
+            if not match:
+                continue
+            raw_path = match.group(1)
+            image_path = (manual_path.parent / raw_path).resolve()
+            if not image_path.exists():
+                return False, f"图片相对路径无效: {raw_path}（应以草稿/操作手册.md 所在目录为基准）"
+            if image_path.stat().st_size == 0:
+                return False, f"图片文件为空: {raw_path}"
 
     return True, f"OK: {len(images)} 张真实业务截图，{len(placeholders)} 个截图预留，引用文件均有效"
 
@@ -740,13 +742,13 @@ def check_login_and_homepage(text: str) -> tuple[bool, str]:
     """Verify login coverage; accept placeholders when screenshots are skipped."""
     login_heading = r'^#{2,4}\s+(?:\d+(?:\.\d+)*\s+)?[^\n]*登录[^\n]*$'
     has_login = bool(re.search(login_heading, text, re.MULTILINE))
-    has_login_image = bool(re.search(r'!\[[^\]]*登录[^\]]*\]\(截图/[^)]+\)', text))
+    has_login_image = bool(re.search(r'!\[[^\]]*登录[^\]]*\]\((?:\.\./)?(?:截图|用户截图)/[^)]+\)', text))
     has_login_placeholder = bool(re.search(r'【截图预留：[^】]*登录[^】]*】', text))
     if not has_login or not (has_login_image or has_login_placeholder):
         return False, "缺少登录操作章节或登录界面截图预留"
 
     claims_homepage = bool(re.search(r'^#{2,4}\s+(?:\d+(?:\.\d+)*\s+)?系统首页\s*$', text, re.MULTILINE))
-    has_homepage_image = bool(re.search(r'!\[[^\]]*首页[^\]]*\]\(截图/[^)]+\)', text))
+    has_homepage_image = bool(re.search(r'!\[[^\]]*首页[^\]]*\]\((?:\.\./)?(?:截图|用户截图)/[^)]+\)', text))
     has_homepage_placeholder = bool(re.search(r'【截图预留：[^】]*首页[^】]*】', text))
     if claims_homepage and not (has_homepage_image or has_homepage_placeholder):
         return False, "手册声明存在系统首页，但缺少对应截图或预留"

@@ -836,6 +836,15 @@ def parse_table_line(line: str) -> list[str]:
     return [cell.strip() for cell in line.strip().strip("|").split("|")]
 
 
+def resolve_manual_image(base_dir: Path, raw_path: str) -> Path:
+    """Resolve Markdown images relative to the Markdown file; keep task-root fallback for legacy drafts."""
+    primary = (base_dir / raw_path).resolve()
+    if primary.exists():
+        return primary
+    legacy = (base_dir.parent / raw_path).resolve()
+    return legacy if legacy.exists() else primary
+
+
 def add_image(document: Any, image_path: Path) -> None:
     if not image_path.exists():
         p = document.add_paragraph()
@@ -976,7 +985,7 @@ def build_manual_docx_python(md_path: Path, out_path: Path, base_dir: Path, soft
             continue
         image_match = re.search(r"!\[[^\]]*\]\(([^)]+)\)", stripped)
         if image_match:
-            add_image(document, (base_dir / image_match.group(1)).resolve())
+            add_image(document, resolve_manual_image(base_dir, image_match.group(1)))
             continue
         heading = re.match(r"^(#{1,4})\s+(.+)$", stripped)
         if heading:
@@ -1232,11 +1241,11 @@ def build_all(workdir: Path, software_name: str, version: str, skip_preview: boo
             manual_source = tmp_manual
         try:
             try:
-                build_manual_docx(manual_source, manual_out, draft_dir.parent, final_software_name, final_version)
+                build_manual_docx(manual_source, manual_out, manual_md.parent, final_software_name, final_version)
                 outputs.append(manual_out)
             except PermissionError:
                 fallback_out = variant_output_path(manual_out, "_新版模板式")
-                build_manual_docx(manual_source, fallback_out, draft_dir.parent, final_software_name, final_version)
+                build_manual_docx(manual_source, fallback_out, manual_md.parent, final_software_name, final_version)
                 outputs.append(fallback_out)
                 warnings.append(f"原操作手册文件被占用，已生成备用正式文件：{fallback_out.name}")
         finally:
