@@ -845,6 +845,11 @@ def resolve_manual_image(base_dir: Path, raw_path: str) -> Path:
     return legacy if legacy.exists() else primary
 
 
+def _is_feature_flowchart(image_path: Path) -> bool:
+    """功能分图（操作流程图）文件名含「操作流程」；总图（架构/模块/业务/数据模型）不在此列。"""
+    return "操作流程" in image_path.stem
+
+
 def add_image(document: Any, image_path: Path) -> None:
     if not image_path.exists():
         p = document.add_paragraph()
@@ -858,8 +863,9 @@ def add_image(document: Any, image_path: Path) -> None:
         p.paragraph_format.space_before = Pt(6)
         p.paragraph_format.space_after = Pt(6)
         run = p.add_run()
-        # v1.9 图片按页面可用区域自适应：宽和高同时约束，防止纵向流程图被拉成多页高度而截断
-        width_in, height_in = _fit_image_size(image_path)
+        # v1.10 功能分图默认按页宽 60% 显示，总图保持 100% 页宽；高度上限保证完整不截断
+        width_scale = 0.6 if _is_feature_flowchart(image_path) else 1.0
+        width_in, height_in = _fit_image_size(image_path, width_scale=width_scale)
         run.add_picture(str(image_path), width=Inches(width_in), height=Inches(height_in))
         document.add_paragraph()  # 图后空行
     except Exception:
@@ -868,9 +874,15 @@ def add_image(document: Any, image_path: Path) -> None:
         set_run_font(run, "SimSun", 10.5)
 
 
-def _fit_image_size(image_path: Path, max_width_in: float = 5.8, max_height_in: float = 8.5) -> tuple[float, float]:
+def _fit_image_size(
+    image_path: Path,
+    max_width_in: float = 5.8,
+    max_height_in: float = 8.5,
+    width_scale: float = 1.0,
+) -> tuple[float, float]:
     """根据图片原生宽高比，在页面可用区域内按比例缩放，返回 (宽, 高) 英寸。
-    A4 页边距后可用区域约 宽 5.8in × 高 9.7in；预留页眉页脚与标题空间，高上限取 8.5in。"""
+    A4 页边距后可用区域约 宽 5.8in × 高 9.7in；预留页眉页脚与标题空间，高上限取 8.5in。
+    width_scale 用于把目标页宽缩放（如功能分图默认 0.6）。"""
     try:
         from PIL import Image
 
@@ -878,16 +890,17 @@ def _fit_image_size(image_path: Path, max_width_in: float = 5.8, max_height_in: 
             iw, ih = im.size
         if iw <= 0 or ih <= 0:
             raise ValueError("invalid image size")
+        effective_width = max_width_in * width_scale
         # 先按宽缩放，若高度超限则改按高缩放，保持纵横比
-        scale_w = max_width_in / iw
+        scale_w = effective_width / iw
         scale_h = max_height_in / ih
         scale = min(scale_w, scale_h)
         if scale <= 0:
             raise ValueError("invalid scale")
         return iw * scale, ih * scale
     except Exception:
-        # 无法读取尺寸时回退到固定宽
-        return max_width_in, max_width_in
+        # 无法读取尺寸时回退到固定宽（按 width_scale 折算）
+        return max_width_in * width_scale, max_width_in * width_scale
 
 
 def add_toc_field(paragraph: Any, instruction: str = ' TOC \\o "1-3" \\h \\z \\u ') -> None:

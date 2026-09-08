@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-from build_docx_from_md import _fit_image_size, resolve_manual_image
+from build_docx_from_md import _fit_image_size, _is_feature_flowchart, resolve_manual_image
 from content_quality_check import check_login_and_homepage
 from export_whiteboard_charts import parse_chart_rows, update_chart_list, update_manual_references
 
@@ -92,6 +92,22 @@ class ExportWhiteboardChartsTest(unittest.TestCase):
             w, h = _fit_image_size(png)
             self.assertAlmostEqual(round(w, 2), 5.8, places=1)
             self.assertAlmostEqual(round(w / h, 2), 3.95, places=1)
+
+    def test_is_feature_flowchart_detects_operation_steps(self):
+        self.assertTrue(_is_feature_flowchart(Path("../截图/监测点管理操作流程.png")))
+        self.assertFalse(_is_feature_flowchart(Path("../截图/系统架构图.png")))
+        self.assertFalse(_is_feature_flowchart(Path("../截图/功能模块图.png")))
+
+    def test_feature_flowchart_defaults_to_60pct_width(self):
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as td:
+            png = Path(td) / "区域管理操作流程.png"
+            # 0.39 纵横比的纵向分图
+            Image.new("RGB", (1261, 3200), "white").save(png)
+            w, h = _fit_image_size(png, width_scale=0.6)
+            # 60% 页宽 = 3.48in；因高度受限取较小，宽应受高度约束（3.35in 原始宽度变 0.6 后受高限制）
+            self.assertLessEqual(round(w, 2), 3.48)
+            self.assertLessEqual(round(h, 2), 8.5)
 
     def test_login_check_accepts_sibling_user_screenshot(self):
         text = "## 1 系统登录\n\n![系统登录界面](../用户截图/登录页面.png)\n"
