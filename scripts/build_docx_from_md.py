@@ -858,12 +858,36 @@ def add_image(document: Any, image_path: Path) -> None:
         p.paragraph_format.space_before = Pt(6)
         p.paragraph_format.space_after = Pt(6)
         run = p.add_run()
-        run.add_picture(str(image_path), width=Inches(5.8))
+        # v1.9 图片按页面可用区域自适应：宽和高同时约束，防止纵向流程图被拉成多页高度而截断
+        width_in, height_in = _fit_image_size(image_path)
+        run.add_picture(str(image_path), width=Inches(width_in), height=Inches(height_in))
         document.add_paragraph()  # 图后空行
     except Exception:
         p = document.add_paragraph()
         run = p.add_run(f"[截图无法插入：{image_path}]")
         set_run_font(run, "SimSun", 10.5)
+
+
+def _fit_image_size(image_path: Path, max_width_in: float = 5.8, max_height_in: float = 8.5) -> tuple[float, float]:
+    """根据图片原生宽高比，在页面可用区域内按比例缩放，返回 (宽, 高) 英寸。
+    A4 页边距后可用区域约 宽 5.8in × 高 9.7in；预留页眉页脚与标题空间，高上限取 8.5in。"""
+    try:
+        from PIL import Image
+
+        with Image.open(image_path) as im:
+            iw, ih = im.size
+        if iw <= 0 or ih <= 0:
+            raise ValueError("invalid image size")
+        # 先按宽缩放，若高度超限则改按高缩放，保持纵横比
+        scale_w = max_width_in / iw
+        scale_h = max_height_in / ih
+        scale = min(scale_w, scale_h)
+        if scale <= 0:
+            raise ValueError("invalid scale")
+        return iw * scale, ih * scale
+    except Exception:
+        # 无法读取尺寸时回退到固定宽
+        return max_width_in, max_width_in
 
 
 def add_toc_field(paragraph: Any, instruction: str = ' TOC \\o "1-3" \\h \\z \\u ') -> None:

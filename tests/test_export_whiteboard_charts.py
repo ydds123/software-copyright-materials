@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-from build_docx_from_md import resolve_manual_image
+from build_docx_from_md import _fit_image_size, resolve_manual_image
 from content_quality_check import check_login_and_homepage
 from export_whiteboard_charts import parse_chart_rows, update_chart_list, update_manual_references
 
@@ -74,6 +74,24 @@ class ExportWhiteboardChartsTest(unittest.TestCase):
             image = shots / "系统架构图.png"
             image.write_bytes(b"png")
             self.assertEqual(resolve_manual_image(draft, "截图/系统架构图.png"), image.resolve())
+
+    def test_fit_image_size_caps_height_for_tall_flowchart(self):
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as td:
+            png = Path(td) / "tall.png"
+            Image.new("RGB", (666, 3200), "white").save(png)
+            w, h = _fit_image_size(png)
+            self.assertLessEqual(round(h, 2), 8.5)
+            self.assertAlmostEqual(round(w / h, 2), 0.21, places=1)
+
+    def test_fit_image_size_uses_full_width_for_wide(self):
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as td:
+            png = Path(td) / "wide.png"
+            Image.new("RGB", (2400, 607), "white").save(png)
+            w, h = _fit_image_size(png)
+            self.assertAlmostEqual(round(w, 2), 5.8, places=1)
+            self.assertAlmostEqual(round(w / h, 2), 3.95, places=1)
 
     def test_login_check_accepts_sibling_user_screenshot(self):
         text = "## 1 系统登录\n\n![系统登录界面](../用户截图/登录页面.png)\n"
