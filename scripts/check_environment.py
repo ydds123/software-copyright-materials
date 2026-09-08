@@ -15,7 +15,6 @@ from urllib.parse import urlparse
 
 from common import confirm_params, ensure_dir, resolve_task_dir, resolve_workdir, write_json
 
-
 def resolve_command(command_name: str) -> str:
     if os.name != "nt":
         return command_name
@@ -50,7 +49,6 @@ def resolve_command(command_name: str) -> str:
 
     return command_name
 
-
 def command_version(command: list[str]) -> tuple[bool, str]:
     try:
         resolved = [resolve_command(command[0]), *command[1:]]
@@ -66,7 +64,6 @@ def command_version(command: list[str]) -> tuple[bool, str]:
         return completed.returncode == 0, output[0] if output else "available"
     except Exception as exc:
         return False, str(exc)
-
 
 def command_output(command: list[str]) -> tuple[bool, str]:
     try:
@@ -84,7 +81,6 @@ def command_output(command: list[str]) -> tuple[bool, str]:
     except Exception as exc:
         return False, str(exc)
 
-
 def check_lark_user_auth() -> tuple[bool, str]:
     ok, output = command_output(["lark-cli", "auth", "status", "--verify"])
     if not ok:
@@ -101,7 +97,6 @@ def check_lark_user_auth() -> tuple[bool, str]:
         return True, f"user token valid: {user_name}"
     return False, str(status.get("note") or f"identity={status.get('identity')}, tokenStatus={token_status}")
 
-
 def is_feishu_document_target(value: str | None) -> bool:
     target = (value or "").strip()
     if not target:
@@ -114,13 +109,11 @@ def is_feishu_document_target(value: str | None) -> bool:
     valid_path = any(part in parsed.path for part in ("/docx/", "/docs/", "/wiki/"))
     return parsed.scheme in ("http", "https") and valid_host and valid_path
 
-
 def major_version(version: str) -> int:
     try:
         return int(version.strip().split(".", 1)[0])
     except (ValueError, IndexError):
         return 0
-
 
 def run_docx_env_windows(skill_dir: Path) -> tuple[bool, str]:
     dotnet_ok, dotnet_version = command_version(["dotnet", "--version"])
@@ -162,7 +155,6 @@ def run_docx_env_windows(skill_dir: Path) -> tuple[bool, str]:
 
     return True, f"Windows native check OK: dotnet {dotnet_version}; restore/build succeeded"
 
-
 def run_docx_env(skill_dir: Path) -> tuple[bool, str]:
     if os.name == "nt":
         return run_docx_env_windows(skill_dir)
@@ -176,10 +168,8 @@ def run_docx_env(skill_dir: Path) -> tuple[bool, str]:
     except Exception as exc:
         return False, str(exc)
 
-
 def module_available(name: str) -> bool:
     return importlib.util.find_spec(name) is not None
-
 
 def check_environment(skill_dir: Path, feishu_doc: str = "", skip_feishu: bool = False) -> dict[str, Any]:
     python_docx = module_available("docx")
@@ -198,14 +188,9 @@ def check_environment(skill_dir: Path, feishu_doc: str = "", skip_feishu: bool =
         if skip_feishu
         else command_version(["npx", "-y", "@larksuite/whiteboard-cli@^0.2.13", "-v"])
     )
-    sharp_cli_ok, sharp_cli_version = (
-        (False, "skipped")
-        if skip_feishu
-        else command_version(["npx", "-y", "sharp-cli", "--version"])
-    )
     feishu_doc = feishu_doc.strip()
     feishu_doc_ready = is_feishu_document_target(feishu_doc)
-    charts_ready = not skip_feishu and lark_cli_ok and lark_user_auth_ok and whiteboard_cli_ok and sharp_cli_ok and feishu_doc_ready
+    charts_ready = not skip_feishu and lark_cli_ok and lark_user_auth_ok and whiteboard_cli_ok and feishu_doc_ready
 
     final_docx_mode = "docx-openxml" if docx_ready else ("python-docx" if python_docx else "basic-ooxml")
     action_items: list[str] = []
@@ -218,8 +203,6 @@ def check_environment(skill_dir: Path, feishu_doc: str = "", skip_feishu: bool =
             action_items.append("运行 lark-cli auth login --recommend 完成用户授权，或明确选择 --skip-feishu")
         if not whiteboard_cli_ok:
             action_items.append("确认 npx 可调用 @larksuite/whiteboard-cli，或明确选择 --skip-feishu")
-        if not sharp_cli_ok:
-            action_items.append("确认 npx 可调用 sharp-cli 完成 SVG 白底 PNG 转换，或明确选择 --skip-feishu")
         if not feishu_doc_ready:
             action_items.append("用 --feishu-doc 指定可编辑的飞书在线文档 URL/token，或明确选择 --skip-feishu")
     requires_user_input = bool(action_items)
@@ -236,8 +219,7 @@ def check_environment(skill_dir: Path, feishu_doc: str = "", skip_feishu: bool =
             "lark_cli": lark_cli_ok,
             "lark_user_auth": lark_user_auth_ok,
             "whiteboard_cli": whiteboard_cli_ok,
-            "sharp_cli": sharp_cli_ok,
-            "feishu_target_document": feishu_doc_ready,
+                "feishu_target_document": feishu_doc_ready,
             "feishu_charts": charts_ready,
             "feishu_skipped": skip_feishu,
         },
@@ -246,7 +228,6 @@ def check_environment(skill_dir: Path, feishu_doc: str = "", skip_feishu: bool =
             "dotnet": dotnet_version,
             "lark_cli": lark_cli_version,
             "whiteboard_cli": whiteboard_cli_version,
-            "sharp_cli": sharp_cli_version,
         },
         "feishu": {
             "target_document": feishu_doc or None,
@@ -272,7 +253,6 @@ def check_environment(skill_dir: Path, feishu_doc: str = "", skip_feishu: bool =
         "docx_env_output": docx_output,
     }
 
-
 def write_markdown(path: Path, data: dict[str, Any]) -> None:
     caps = data["capabilities"]
     lines = [
@@ -297,7 +277,6 @@ def write_markdown(path: Path, data: dict[str, Any]) -> None:
         f"- lark-cli：{'可用' if caps['lark_cli'] else '不可用'}（{data['versions']['lark_cli']}）",
         f"- 用户授权：{'已跳过检查' if caps['feishu_skipped'] else ('有效' if caps['lark_user_auth'] else '无效或未登录')}（{data['feishu']['user_auth_status']}）",
         f"- whiteboard-cli：{'已跳过检查' if caps['feishu_skipped'] else ('可用' if caps['whiteboard_cli'] else '不可用')}（{data['versions']['whiteboard_cli']}）",
-        f"- sharp-cli：{'已跳过检查' if caps['feishu_skipped'] else ('可用' if caps['sharp_cli'] else '不可用')}（{data['versions']['sharp_cli']}）",
         "",
         "### 第二步：目标在线文档",
         "",
@@ -329,7 +308,6 @@ def write_markdown(path: Path, data: dict[str, Any]) -> None:
         "",
     ]
     path.write_text("\n".join(lines), encoding="utf-8")
-
 
 def main() -> None:
     parser = argparse.ArgumentParser()
@@ -369,7 +347,6 @@ def main() -> None:
     if data.get("requires_user_input"):
         print("STOP_FOR_USER")
         print(f"NEXT_ACTION: {data['next_action']}")
-
 
 if __name__ == "__main__":
     main()

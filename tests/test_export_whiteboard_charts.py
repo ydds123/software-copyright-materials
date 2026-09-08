@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 from build_docx_from_md import _fit_image_size, _is_feature_flowchart, build_manual_docx_python, resolve_manual_image
 from content_quality_check import check_login_and_homepage
-from export_whiteboard_charts import parse_chart_rows, update_chart_list, update_manual_references
+from export_whiteboard_charts import crop_to_content, parse_chart_rows, update_chart_list, update_manual_references
 
 
 SAMPLE = """## 总图
@@ -31,13 +31,13 @@ class ExportWhiteboardChartsTest(unittest.TestCase):
             ("区域管理操作流程", "TokenB456"),
         ])
 
-    def test_update_chart_list_records_svg_and_png(self):
+    def test_update_chart_list_records_local_png(self):
         charts = parse_chart_rows(SAMPLE)
         result = update_chart_list(SAMPLE, charts)
-        self.assertIn("SVG源文件", result)
-        self.assertIn("Word图片", result)
-        self.assertIn("../截图/系统架构图.svg | ../截图/系统架构图.png", result)
-        self.assertIn("../截图/区域管理操作流程.svg | ../截图/区域管理操作流程.png", result)
+        self.assertIn("本地文件", result)
+        self.assertIn("../截图/系统架构图.png", result)
+        self.assertIn("../截图/区域管理操作流程.png", result)
+        self.assertNotIn("SVG源文件", result)
         self.assertNotIn("系统架构图.jpg", result)
 
     def test_update_chart_list_is_idempotent(self):
@@ -108,6 +108,15 @@ class ExportWhiteboardChartsTest(unittest.TestCase):
             # 60% 页宽 = 3.48in；因高度受限取较小，宽应受高度约束（3.35in 原始宽度变 0.6 后受高限制）
             self.assertLessEqual(round(w, 2), 3.48)
             self.assertLessEqual(round(h, 2), 8.5)
+
+    def test_crop_to_content_trims_whitespace(self):
+        from PIL import Image, ImageDraw
+        with tempfile.TemporaryDirectory() as td:
+            im = Image.new("RGB", (300, 300), "white")
+            draw = ImageDraw.Draw(im)
+            draw.rectangle([100, 100, 150, 150], fill="black")
+            cropped = crop_to_content(im, margin=24)
+            self.assertEqual(cropped.size, (24 + 51 + 24, 24 + 51 + 24))
 
     def test_login_check_accepts_sibling_user_screenshot(self):
         text = "## 1 系统登录\n\n![系统登录界面](../用户截图/登录页面.png)\n"

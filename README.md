@@ -15,7 +15,7 @@
 - 按项目类型选择用户手册、设计说明书或混合型文档，不套用固定章节模板。
 - 生成前 30 页加后 30 页或全部源码形式的程序鉴别材料。
 - 生成申请表信息、程序鉴别材料 DOCX 和文档鉴别材料 DOCX。
-- 支持飞书画板技术图表，并以内容自适应 SVG 留存源文件，转换白底 PNG 供 Word 嵌入。
+- 支持飞书画板技术图表，以 preview 完整快照 + 内容包围盒裁剪生成 Word 图片。
 - 支持业务截图清单、视觉证据覆盖、重复图片检查和人工复核提示。
 - 检查手册、申请表、代码清单、证据计划和最终 Word 的跨材料一致性。
 - 生成软件边界说明、整批结构风险报告和提交就绪结论。
@@ -124,7 +124,7 @@ python -m pip install -r requirements.txt
 |---|---|---|
 | .NET SDK 8.0+ | 完整 OpenXML DOCX 生成、预览和校验 | 可降级生成基础 DOCX，但会提示确认 |
 | pandoc | Markdown / 文档预览辅助 | 不影响核心流程 |
-| Node.js、npm、npx | 飞书画板和 SVG 转换 | 不生成图表时可由用户明确跳过 |
+| Node.js、npm、npx | 飞书画板操作 | 不生成图表时可由用户明确跳过 |
 | `lark-cli` | 飞书文档与画板操作 | 未授权时停止并引导授权 |
 | `whiteboard-cli` | 复杂图表写入飞书画板 | 缺失时停止或由用户明确跳过 |
 | `sharp-cli` | SVG 转白底 PNG | 缺失时图表导出环境不完整 |
@@ -140,17 +140,15 @@ python scripts/install_dependencies.py --check
 python scripts/install_dependencies.py --install
 ```
 
-## 飞书图表与 SVG 自适应导出
+## 飞书图表导出（preview 快照 + 内容裁剪）
 
-飞书 `preview` 快照会归一化为固定正方形画布，短图可能产生大面积底部空白。因此默认流程禁止使用 preview 作为 Word 图源：
+飞书 SVG 导出的 `viewBox` 只覆盖画板视口，非中心布局的画板（如带分支的纵向流程图）内容会超出 viewBox 而被裁掉。因此 Word 图源统一使用 **preview 完整快照 + 内容包围盒裁剪**（保留 24px 边距）：
 
 ```text
 飞书画板
-  → whiteboard +export --output-type svg
-  → 保留同名自适应 SVG
-  → sharp-cli 合并白色背景
-  → 最大 2400×3200、fit=inside 等比例 PNG
-  → Markdown 引用 PNG
+  → whiteboard +export --output-type preview
+  → 按内容包围盒裁剪（保留 24px 边距）
+  → Markdown 引用 ../截图/<图表名称>.png
   → Word 嵌入
 ```
 
@@ -159,7 +157,6 @@ python scripts/install_dependencies.py --install
 ```powershell
 lark-cli --version
 npx -y @larksuite/whiteboard-cli@^0.2.13 -v
-npx -y sharp-cli --version
 ```
 
 批量导出：
@@ -176,10 +173,10 @@ python scripts/export_whiteboard_charts.py `
 脚本会：
 
 - 从技术图表清单解析画板 token；
-- 生成 `截图/<图表名称>.svg` 和同名白底 PNG；
-- 自动更新 `技术图表清单.md` 的“SVG源文件 / Word图片”列；
+- 生成 `截图/<图表名称>.png`（preview 快照 + 内容裁剪）；
+- 自动更新 `技术图表清单.md` 的“本地文件”列；
 - 自动将操作手册中的旧 JPG 或测试图引用切换为 `../截图/<图表名称>.png`，确保以 `草稿/操作手册.md` 为基准正确解析；
-- 生成 `截图/技术图表SVG导出报告.json`。
+- 生成 `截图/技术图表SVG导出报告.json`（模式 preview-crop）。
 
 每张 PNG 仍需通过视觉检查：中文清晰、连线完整、节点不重叠、内容不裁断、无固定画布空白。不要省略路径中的 `../`；同批任务通常存在多个 `系统架构图.png` 等同名文件，错误的相对路径可能被 Markdown 工具解析到其他软件的图片。
 
@@ -254,7 +251,6 @@ Skill 会在每个人工门禁停止，展示需要确认的业务口径或材�
 │   ├── 申请表字段对齐记录.md
 │   └── 技术图表清单.md                    # 仅生成飞书图表时
 ├── 截图/
-│   ├── <图表名称>.svg
 │   ├── <图表名称>.png
 │   ├── 技术图表SVG导出报告.json
 │   └── 截图清单.json
@@ -311,7 +307,7 @@ Skill 会在每个人工门禁停止，展示需要确认的业务口径或材�
 | `capture_screenshots.py` | 整理截图及清单 |
 | `visual_evidence_check.py` | 检查覆盖率、证据等级、重复和脱敏状态 |
 | `visual_model_adapter.py` | 对接可选视觉模型 |
-| `export_whiteboard_charts.py` | 批量导出自适应 SVG 并生成 Word PNG |
+| `export_whiteboard_charts.py` | 批量导出 preview 快照并按内容裁剪生成 Word PNG |
 
 ### 申请、门禁与最终验证
 

@@ -901,21 +901,19 @@ PUML
 
 ### 10. 导出图表并嵌入 Markdown 草稿（可选，在 `manual` 确认前执行）
 
-全部图表生成完毕后，将飞书画板批量导出为**内容自适应 SVG**，再转换为白底 PNG 供 Word 嵌入。禁止默认使用 `--output-type preview`：飞书预览快照会归一化为固定正方形画布，短图容易产生大面积底部空白。SVG 的 `width`、`height` 和 `viewBox` 按画板内容自适应，可同时保留矢量源文件和适配 Word 的位图。
+全部图表生成完毕后，将飞书画板批量导出为 **preview 完整快照**，再按内容包围盒裁剪为白底 PNG 供 Word 嵌入。**禁止用 SVG 导出作为 Word 图源**：飞书 SVG 导出的 `viewBox` 只覆盖画板视口，非中心布局的画板（如带分支的纵向流程图）内容会超出 viewBox 而被裁掉。preview 快照是画板内容的完整渲染，裁剪掉外围空白后即为干净的自适应图。
 
-`build_docx_from_md.py` 在生成正式 Word 时会读取 `![alt](path)` 并调用 python-docx 的 `add_picture()`；python-docx 不直接接收 SVG，因此 Markdown 引用转换后的 PNG，`技术图表清单.md` 同时记录 SVG 源文件与 Word PNG。
+`build_docx_from_md.py` 在生成正式 Word 时会读取 `![alt](path)` 并调用 python-docx 的 `add_picture()`；Markdown 引用 `../截图/<图表名称>.png`，`技术图表清单.md` 记录画板链接与本地 PNG。
 
-**Step 1 — 批量导出自适应 SVG 并转换白底 PNG**：
+**Step 1 — 批量导出 preview 快照并按内容裁剪**：
 
-优先运行统一脚本；脚本从 `技术图表清单.md` 解析画板 token，逐张执行 SVG 导出、透明背景转白、等比例缩放，并自动更新图表清单和操作手册引用：
+优先运行统一脚本；脚本从 `技术图表清单.md` 解析画板 token，逐张执行 preview 导出、内容包围盒裁剪（保留 24px 边距），并自动更新图表清单和操作手册引用：
 
 ```powershell
 python scripts/export_whiteboard_charts.py `
   --chart-list "<任务目录>/草稿/技术图表清单.md" `
   --output-dir "<任务目录>/截图" `
-  --manual "<任务目录>/草稿/操作手册.md" `
-  --width 2400 `
-  --height 3200
+  --manual "<任务目录>/草稿/操作手册.md"
 ```
 
 底层等价流程：
@@ -923,26 +921,24 @@ python scripts/export_whiteboard_charts.py `
 ```powershell
 lark-cli whiteboard +export `
   --whiteboard-token <board_token> `
-  --output-type svg `
-  --output "./<图表名称>.svg" `
+  --output-type preview `
+  --output "./.preview.jpg" `
   --overwrite --as user
-
-npx -y sharp-cli -i "./<图表名称>.svg" -o "./.native.png" flatten white
-npx -y sharp-cli -i "./.native.png" -o "./<图表名称>.png" resize 2400 3200 --fit inside
+# 然后按内容包围盒裁剪（保留 24px 边距）并保存为 <图表名称>.png
 ```
 
 导出后每张图保留两个文件：
 
+导出后每张图保留一个文件：
+
 ```text
 截图/
-├── 系统架构图.svg       # 内容自适应矢量源文件
-├── 系统架构图.png       # 白底、等比例、供 Word 嵌入
-├── 功能模块图.svg
+├── 系统架构图.png       # preview 完整快照 + 内容包围盒裁剪，供 Word 嵌入
 ├── 功能模块图.png
 └── ...
 ```
 
-> SVG 默认透明背景。转 PNG 时必须先 `flatten white`，否则在深色查看器或部分 Word 环境中可能显示黑底；转换时用 `--fit inside` 约束最大宽高并保持纵横比，禁止强制拉伸。默认最大 2400×3200，避免纵向流程图按宽度放大后生成超高图片。
+> **为什么不用 SVG**：飞书 SVG 导出的 viewBox 只覆盖画板「视口」。画板内容超出视口时（分支流程图、非中心布局），SVG 会裁掉右侧/底部内容；preview 快照是完整渲染，无此问题。裁剪时保留 24px 边距即可。
 
 **⛔ Step 1b — SVG/PNG 可读性检查（强制，每张都必须过）**
 
@@ -954,9 +950,9 @@ npx -y sharp-cli -i "./.native.png" -o "./<图表名称>.png" resize 2400 3200 -
 | 布局完整性 | 箭头/连线不穿过节点文字，分支路径不堆叠，泳道图角色列宽度足够 | `fork` + 长中文 activity 节点容易重叠，改用 `split` 或拆分多个独立分支 |
 | 信息完备 | 标题、起止点、分支判断（菱形）和终止节点完整出现 | 过长的标题或 note 可能被截断——删除冗余修饰文字 |
 
-**发现任何问题必须重写 PlantUML/SVG → 重新写入画板 → 重新导出 SVG → 转换 PNG → 重新检查**，直到 PNG 通过三项检查。禁止将未检查的 PNG 直接嵌入 Markdown。
+**发现任何问题必须重写 PlantUML → 重新写入画板 → 重新导出 preview → 裁剪 → 重新检查**，直到 PNG 通过三项检查。禁止将未检查的 PNG 直接嵌入 Markdown。
 
-此项检查在嵌入操作手册前独立完成——不通过时不允许进入 Step 2。只有全部图表 PNG 通过检查，且 SVG 的 `viewBox` 与内容边界匹配、PNG 无固定画布空白，才能开始用 `![图表名](截图/xxx.png)` 替换占位。
+此项检查在嵌入操作手册前独立完成——不通过时不允许进入 Step 2。只有全部图表 PNG 通过检查、且内容无裁剪（四边有留白），才能开始用 `![图表名](../截图/xxx.png)` 替换占位。
 
 > **PlantUML 中文防乱码速查**：
 > - Activity 图：`start` / `stop` / `:节点文字;` — **每节点 ≤ 6 个字，超过用 `\n` 折行**
@@ -1009,19 +1005,19 @@ npx -y sharp-cli -i "./.native.png" -o "./<图表名称>.png" resize 2400 3200 -
 
 ```markdown
 ## 总图
-| # | 图表名称 | 画板链接 | SVG源文件 | Word图片 |
-|---|---------|---------|---------|---------|
-| 1 | 系统架构图 | https://... | ../截图/系统架构图.svg | ../截图/系统架构图.png |
-| ... | ... | ... | ... | ... |
+| # | 图表名称 | 画板链接 | 本地文件 |
+|---|---------|---------|---------|
+| 1 | 系统架构图 | https://... | ../截图/系统架构图.png |
+| ... | ... | ... | ... |
 
 ## 分图（功能操作流程）
-| # | 图表名称 | 对应模块 | 画板链接 | SVG源文件 | Word图片 |
-|---|---------|---------|---------|---------|---------|
-| 5 | 课程管理操作流程 | coursesInfo | https://... | ../截图/课程管理操作流程.svg | ../截图/课程管理操作流程.png |
-| ... | ... | ... | ... | ... | ... |
+| # | 图表名称 | 对应模块 | 画板链接 | 本地文件 |
+|---|---------|---------|---------|---------|
+| 5 | 课程管理操作流程 | coursesInfo | https://... | ../截图/课程管理操作流程.png |
+| ... | ... | ... | ... | ... |
 ```
 
-> **说明**：`build_docx_from_md.py` (Step 14) 在将 Markdown 转为 Word 时，自动解析 `![alt](path)` 语法。如果图片文件存在则用 python-docx 的 `add_picture()` 插入（宽度 5.8 英寸），如果缺失则插入占位文字 `[截图缺失：path]`。因此 SVG 作为可维护的自适应源文件留存，Markdown 统一引用同名白底 PNG，正式 Word 会自动包含所有图表。
+> **说明**：`build_docx_from_md.py` (Step 14) 在将 Markdown 转为 Word 时，自动解析 `![alt](path)` 语法。如果图片文件存在则用 python-docx 的 `add_picture()` 插入（宽度 5.8 英寸），如果缺失则插入占位文字 `[截图缺失：path]`。因此只要 PNG 已正确导出到 `截图/` 目录、且 Markdown 中的相对路径正确，正式 Word 就会自动包含所有图表。
 
 ### 11. 模型自审操作手册
 
