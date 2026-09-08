@@ -117,14 +117,28 @@ class BatchStructureTest(unittest.TestCase):
         )
         return _write(d / "巡检系统手册.md", doc), _write(d / "报警系统手册.md", doc)
 
-    def test_identical_skeletons_blocked(self):
+    def test_identical_skeletons_risk(self):
+        """v2 决策④：相同骨架不再硬阻断，只出高风险（需人工复核）。"""
         with tempfile.TemporaryDirectory() as td:
             a, b = self._two_identical_docs(Path(td))
             report = bsc.run([a, b])
-            self.assertEqual(report["status"], "blocked")
-            self.assertTrue(any("目录同构" in e for e in report["errors"]))
+            self.assertEqual(report["status"], "risk")
+            self.assertEqual(report["errors"], [])
+            high = [r for r in report["risks"] if r["level"] == "high"]
+            self.assertTrue(high, report["risks"])
 
-    def test_repeated_section_blocked(self):
+    def test_numbering_error_blocked(self):
+        """v2：章节编号父子不一致 = 确定性硬错误，阻断。"""
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td)
+            doc = "# 手册\n\n## 4 功能清单\n\n### 3.1 定位卡管理\n\n内容\n"
+            a = _write(d / "bad.md", doc)
+            report = bsc.run([a])
+            self.assertEqual(report["status"], "blocked")
+            self.assertTrue(any("编号错误" in e for e in report["errors"]), report["errors"])
+
+    def test_repeated_section_risk(self):
+        """v2 决策④：重复小节从硬阻断降级为风险提示。"""
         with tempfile.TemporaryDirectory() as td:
             d = Path(td)
             doc = (
@@ -133,8 +147,9 @@ class BatchStructureTest(unittest.TestCase):
             )
             a = _write(d / "single.md", doc)
             report = bsc.run([a])
-            self.assertEqual(report["status"], "blocked")
-            self.assertTrue(any("重复小节" in e for e in report["errors"]))
+            self.assertEqual(report["status"], "risk")
+            self.assertEqual(report["errors"], [])
+            self.assertTrue(any(r["signal"] == "repeated_sections" for r in report["risks"]), report["risks"])
 
     def test_distinct_docs_pass(self):
         with tempfile.TemporaryDirectory() as td:

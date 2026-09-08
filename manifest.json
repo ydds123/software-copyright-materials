@@ -1,0 +1,50 @@
+{
+  "schema_version": "2.0",
+  "name": "software-copyright-materials",
+  "version": "1.4.0",
+  "description": "Generate guided Chinese software copyright application materials from a real project: source code extraction (front30+back30), operation manual, application form, and DOCX materials.",
+  "maturity": "production",
+  "owner": "Fokkyp",
+  "review_cadence": "per-release",
+  "trust_level": "local",
+  "license": "MIT",
+  "checksums": {
+    "package_sha256": ""
+  },
+  "compatibility": {
+    "openai": "unknown",
+    "claude": "pass",
+    "generic": "pass"
+  },
+  "source": {
+    "skill_dir": ".",
+    "skill_ir": "",
+    "ir_schema_version": "",
+    "canonical_metadata": "agents/interface.yaml"
+  },
+  "artifacts": {
+    "overview_html": "",
+    "review_studio_html": "",
+    "trust_report": "reports/security_trust_report.md",
+    "conformance_matrix": "",
+    "package_metadata": ""
+  },
+  "distribution": {
+    "archive_verified": false,
+    "archive_sha256": "",
+    "package_verification": ""
+  },
+  "lifecycle_stage": "production",
+  "status": "active",
+  "updated_at": "2026-09-01",
+  "extensions": {
+    "governance": {
+      "notes": "v1.4: SKILL.md 精简（全量规范下沉 references/skill-full-spec.md）、补 manifest/interface/权限审批、新增回归测试。回归测试防四坑：材料时效、抽取顺序、覆盖硬阻断、标注合规。"
+    }
+  },
+  "maturity_tier": "production",
+  "target_platforms": [
+    "claude",
+    "generic"
+  ]
+}

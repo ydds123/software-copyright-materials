@@ -34,6 +34,27 @@ def extract_docx(docx_path: Path) -> tuple[str, int]:
     for table in doc.tables:
         for row in table.rows:
             text += "\n" + " | ".join(cell.text for cell in row.cells)
+    # v1.7 提取页眉页脚文本（程序鉴别材料的软件名/版本号/页码在 header1.xml）
+    for section in doc.sections:
+        for hf in (section.header, section.footer):
+            try:
+                for p in hf.paragraphs:
+                    if p.text.strip():
+                        text += "\n" + p.text
+            except Exception:
+                continue
+    # python-docx 偶发读不到 header（style 关联），用 zipfile 兜底
+    try:
+        import zipfile as _z
+        with _z.ZipFile(str(docx_path)) as zf:
+            for n in zf.namelist():
+                if re.search(r'word/(header|footer)\d+\.xml$', n):
+                    xml = zf.read(n).decode('utf-8', errors='replace')
+                    for t in re.findall(r'<w:t[^>]*>([^<]*)</w:t>', xml):
+                        if t.strip():
+                            text += "\n" + t
+    except Exception:
+        pass
     image_count = 0
     for rel in doc.part.rels.values():
         if "image" in (rel.reltype or ""):
@@ -55,12 +76,33 @@ def extract_pdf(pdf_path: Path) -> tuple[str, int, int]:
 
 def verify_section_numbering(text: str) -> list[str]:
     errors: list[str] = []
+    # v1.8 主路径：一级章标题序列（"1 引言"样式）连续性检查，
+    # 不依赖子节编号（术语表等章可无 X.Y 子节）
+    chapters: list[int] = []
+    for line in text.splitlines():
+        s = line.strip()
+        if re.match(r'^\d+\.', s):
+            continue  # 子节编号不计入章序列
+        m = re.match(r'^(\d+)\s+[\u4e00-\u9fff]{2,}', s)
+        if m:
+            chapters.append(int(m.group(1)))
+    if len(chapters) >= 2:
+        # 去连续重复（同一章标题在 TOC/正文可能出现两次）
+        uniq: list[int] = []
+        for n in chapters:
+            if not uniq or n != uniq[-1]:
+                uniq.append(n)
+        for a, b in zip(uniq, uniq[1:]):
+            if b != a + 1:
+                errors.append(f"最终件一级编号跳跃：{a} 之后是 {b}")
+                break
+        return errors
+    # fallback：旧逻辑（X.Y 子节反推）
     seq: list[int] = []
     for line in text.splitlines():
         m = re.match(r"^\s*(\d+)\.\d*\s", line.strip())
-        if m and len(re.findall(r"^\s*\d+\.\d*\s", line.strip())):
+        if m:
             seq.append(int(m.group(1)))
-    # Only check top-level numbers that restart sequences
     top: list[int] = []
     for n in seq:
         if not top or n != top[-1]:
@@ -115,10 +157,11 @@ def run(
     if image_count == 0:
         warnings.append("最终件未检测到内嵌图片（如应含截图，请检查断链/白框）")
     elif source_manual and source_manual.exists():
-        src_refs = len(re.findall(r"!\[[^\]]*\]\([^)]+\)|【截图预留：", read_text(source_manual)))
+        # v1.7 只数真实图片引用（![]），【截图预留】占位符不产生图片，不计入比对
+        src_refs = len(re.findall(r"!\[[^\]]*\]\([^)]+\)", read_text(source_manual)))
         if src_refs > 0 and image_count < src_refs:
             errors.append(
-                f"最终件内嵌图片 {image_count} 张，少于源稿引用 {src_refs} 处（疑似断链/丢失）"
+                f"最终件内嵌图片 {image_count} 张，少于源稿真实图片引用 {src_refs} 处（疑似断链/丢失）"
             )
 
     # numbering re-check on final text

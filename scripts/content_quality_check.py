@@ -104,6 +104,9 @@ def check_chart_coverage(text: str, manual_path: Path | None = None) -> tuple[bo
 
     modules_without_form_screenshot = []
     for idx, (start_i, heading) in enumerate(module_starts):
+        # v1.6 非操作章节（场景/排查/修订/术语/部署/机制设计）不做表单截图检查
+        if any(k in heading for k in ("故障排查", "常见场景", "典型场景", "维护场景", "监控场景", "快速上手", "配置问题", "查看问题", "联动问题", "修订记录", "术语", "部署", "运行环境", "数据一致性", "生命周期", "生成机制", "判定机制", "闭环机制")):
+            continue
         # Get module body (from this heading to next ### or ##)
         end_i = module_starts[idx + 1][0] if idx + 1 < len(module_starts) else len(text_lines)
         for j in range(start_i + 1, end_i):
@@ -838,7 +841,15 @@ def check_skill_required_inputs(manual_path: Path, text: str) -> tuple[bool, str
 
     step_tables = len(re.findall(r'^\|\s*操作步骤\s*\|\s*用户操作\s*\|\s*系统响应\s*\|\s*异常处理\s*\|', text, re.M))
     business_modules = [m for m in modules if m.get("module_type") == "business"]
-    if step_tables < len(business_modules):
+    # v1.6 文档类型感知：hybrid/design 允许步骤表+状态机表+条件表混合表达，不强制每业务模块一张四列表
+    doc_type = ""
+    plan_path = draft_dir / "材料证据计划.json"
+    if plan_path.exists():
+        try:
+            doc_type = json.loads(plan_path.read_text(encoding="utf-8")).get("document_plan", {}).get("document_type", "")
+        except Exception:
+            pass
+    if doc_type not in ("hybrid", "design_description") and step_tables < len(business_modules):
         return False, f"四列操作步骤表仅 {step_tables} 张，少于业务型模块数 {len(business_modules)}"
     if text.count("操作路径") < len({m.get("client_endpoint") for m in modules}):
         return False, "操作路径数量不足以覆盖全部客户端"
@@ -908,6 +919,37 @@ def print_profile_report() -> None:
             print(f"  {'':12s}  原因: {p.get('reason','')[:120]}")
         print()
     sys.exit(0)
+
+
+def check_screenshot_scatter(text_lines: list[str]) -> list[str]:
+    """Rule 6 (v1.7): 图文并茂——连续截图之间必须有说明文字，类型无关。
+
+    连续 ≥3 张截图之间无非文字行 → 集中堆放，报 error。
+    表格行、标题行、其他截图行不计入文字间隔。
+    """
+    issues = []
+    img_idx = [i for i, l in enumerate(text_lines)
+               if ('【截图预留' in l or l.strip().startswith('!['))]
+    streak = 1
+    for k in range(1, len(img_idx)):
+        gap = img_idx[k] - img_idx[k - 1]
+        between = text_lines[img_idx[k - 1] + 1:img_idx[k]]
+        has_text = any(
+            t.strip()
+            and not t.strip().startswith(('【截图预留', '![', '|', '#', '```', '>'))
+            for t in between
+        )
+        if gap <= 2 and not has_text:
+            streak += 1
+        else:
+            streak = 1
+        if streak >= 3:
+            issues.append(
+                f"L{img_idx[k] + 1}: 连续 {streak} 张截图之间无说明文字——"
+                "应按图文并茂原则将截图散布到各自描述的段落之后"
+            )
+            streak = 1
+    return issues
 
 
 def main() -> None:
@@ -1015,6 +1057,20 @@ def main() -> None:
             print(w)
     if not ai_errors and not ai_warnings:
         print("  OK — 无 AI 套话")
+
+    # ── 检查 8b: 说人话风格形状（human-writing 软规则，仅警告）──
+    print("\n[8b/20] 说人话风格形状检查 (human-writing check_prose 软规则)")
+    try:
+        from manual_quality import human_writing_soft_notes as _hwsn
+        style_notes = _hwsn(text)
+        if style_notes:
+            for note in style_notes:
+                all_warnings.append(f"风格形状: {note}")
+                print(f"  [warning] {note}")
+        else:
+            print("  OK — 无排比/名词化/句长均匀/开场重复问题")
+    except Exception as exc:
+        print(f"  [skip] 说人话检查不可用: {exc}")
 
     # ── 检查 9: 角色贯穿 ──
     print("\n[9/20] 角色贯穿检查 (1a.3 已降级为警告)")
@@ -1156,6 +1212,7 @@ def main() -> None:
     print("\n[19/20] 截图位置门禁 (上图下文原则 + 字段-截图-异常表顺序)")
     screenshot_issues = []
     text_lines = text.split("\n")
+    screenshot_issues.extend(check_screenshot_scatter(text_lines))
     for i, line in enumerate(text_lines):
         if "【截图预留" not in line and "![" not in line:
             continue
@@ -1201,36 +1258,50 @@ def main() -> None:
             if not has_content_between:
                 screenshot_issues.append(f"L{i + 1}: 截图紧接标题无说明文字——应在功能描述之后")
 
-        # ── Rule 2: 新增/修改表单截图 必须在字段表之后、异常表之前 ──
+        # ── Rule 2: 新增/修改表单截图 必须在字段表之后、异常表之前（通用版，不依赖具体章节编号）──
         if is_new_edit and next_heading:
-            # Good: next heading is 异常逻辑、步骤表、下一个模块
             if "异常" in next_heading:
-                pass  # OK — field table → screenshot → exception table
-            elif next_heading.startswith("### 6.") or next_heading.startswith("## 7"):
-                screenshot_issues.append(
-                    f"L{i + 1}: 新增/修改表单截图放在模块末尾（下一节是「{next_heading}」）——应紧接字段表之后、异常逻辑表之前"
-                )
+                pass  # OK — 字段描述 → 截图 → 异常逻辑
             elif "步骤" in next_heading or "操作步骤" in next_heading:
                 pass  # OK for business modules
+            else:
+                # 截图后到下一标题之间无正文，且截图前的小节里有列表/筛选类描述 → 表单截图堆放在模块末尾
+                next_idx = next(i for i, l in enumerate(text_lines) if l.strip() == next_heading)
+                tail_has_text = any(
+                    x.strip()
+                    and not x.strip().startswith(("![", "【截图预留", "|", "#", "```", ">"))
+                    for x in text_lines[i + 1 : next_idx]
+                )
+                body_before = "\n".join(text_lines[max(0, i - 80) : i])
+                has_list_content = bool(re.search(r"(列表|筛选|每行|行内|搜索)", body_before))
+                if not tail_has_text and has_list_content:
+                    screenshot_issues.append(
+                        f"L{i + 1}: 新增/修改表单截图堆放在模块末尾（下一节是「{next_heading}」）——应紧接表单/字段描述之后"
+                    )
 
         # ── Rule 3: 登录截图在描述之后、不能紧接标题 ──
-        if is_login and prev_heading and prev_heading.startswith("### 6.1"):
-            if not prev_text_line or prev_text_line.startswith("#"):
-                screenshot_issues.append(f"L{i + 1}: 登录截图在标题后、描述前——应放在登录描述文字之后")
+        if is_login and prev_heading and not prev_text_line:
+            screenshot_issues.append(f"L{i + 1}: 登录截图在标题后、描述前——应放在登录描述文字之后")
 
         # ── Rule 4: 列表页截图在模块末尾（下一个模块之前）— OK ──
-        if is_list and next_heading and (next_heading.startswith("### 6.") or next_heading.startswith("## 7")):
-            pass  # list screenshot at module boundary is fine
+        if is_list and next_heading:
+            pass  # 列表截图紧邻列表描述即可，不做硬约束
 
-        # ── Rule 5: 流程图（PNG）在功能描述之后、截图之前 ──
+        # ── Rule 5: 流程图（PNG）在功能描述之后、截图之前（通用版）──
         if is_flow_chart:
-            # Flow chart should be after module purpose paragraph, not at module end
-            if next_heading and ("异常" in next_heading or "操作步骤" in next_heading or "列表界面" in next_heading):
-                pass  # OK — flow chart before detail sections
-            elif next_heading and (next_heading.startswith("### 6.") or next_heading.startswith("## 7")):
-                screenshot_issues.append(
-                    f"L{i + 1}: 操作流程图放在模块末尾——应放在功能描述之后、第一个子节之前"
-                )
+            if next_heading and ("异常" in next_heading or "操作步骤" in next_heading or "列表" in next_heading):
+                pass  # OK — 流程图在细节子节之前
+            elif next_heading:
+                # 下一标题层级更深（如 ## 章下的 ### 节）→ 流程图在细节子节之前，OK；
+                # 同级或更浅（下一模块/章）→ 流程图堆在模块末尾，报错
+                prev_level = len(prev_heading) - len(prev_heading.lstrip("#")) if prev_heading else 0
+                next_level = len(next_heading) - len(next_heading.lstrip("#"))
+                if next_level > prev_level:
+                    pass
+                else:
+                    screenshot_issues.append(
+                        f"L{i + 1}: 操作流程图放在模块末尾——应放在功能描述之后、第一个子节之前"
+                    )
 
     if screenshot_issues:
         for si in screenshot_issues:
@@ -1247,21 +1318,26 @@ def main() -> None:
         stripped = line.strip()
         if stripped.startswith("### ") and not stripped.startswith("#### "):
             title = stripped[4:].strip()
-            # Extract the Chinese text part (after number prefix like "6.1 ")
             clean = re.sub(r"^\d+[A-Z]?\.\d+\s+", "", title)
+            if len(clean) >= 3:
+                section_titles.add(clean)
+        # v1.6 hybrid/design 文档模块节在 #### 层，同样纳入归属候选
+        if stripped.startswith("#### "):
+            title = stripped[5:].strip()
+            clean = re.sub(r"^\d+[A-Z]?\.\d+(\.\d+)*\s+", "", title)
             if len(clean) >= 3:
                 section_titles.add(clean)
 
     for i, line in enumerate(text_lines):
         if "【截图预留" not in line:
             continue
-        # Find the enclosing ### heading (module section)
+        # Find the enclosing heading (### or ####)
         section_title = "unknown"
         for j in range(i - 1, max(0, i - 150), -1):
             stripped = text_lines[j].strip()
-            if stripped.startswith("### ") and not stripped.startswith("#### "):
-                section_title = stripped[4:].strip()
-                section_title = re.sub(r"^\d+[A-Z]?\.\d+\s+", "", section_title)
+            if stripped.startswith("### ") or stripped.startswith("#### "):
+                section_title = stripped[5:].strip() if stripped.startswith("#### ") else stripped[4:].strip()
+                section_title = re.sub(r"^\d+[A-Z]?\.\d+(\.\d+)*\s+", "", section_title)
                 break
 
         # Extract the subject phrase from the screenshot placeholder
@@ -1269,6 +1345,23 @@ def main() -> None:
         if not m:
             continue
         screenshot_subject = m.group(1).strip()
+
+        # v1.6 hybrid/design 文档章节标题带描述性前后缀，字符重叠启发式误报率高，仅保留登录检查
+        doc_type = ""
+        plan_path = manual_path.parent / "材料证据计划.json"
+        if plan_path.exists():
+            try:
+                doc_type = json.loads(plan_path.read_text(encoding="utf-8")).get("document_plan", {}).get("document_type", "")
+            except Exception:
+                pass
+        if doc_type in ("hybrid", "design_description"):
+            for kw in ("登录",):
+                if kw in screenshot_subject and kw not in section_title:
+                    screenshot_ownership_issues.append(
+                        f"L{i + 1}: 截图含「{kw}」但放在「{section_title}」章节内——应移至登录界面章节"
+                    )
+                    break
+            continue
 
         # Try to find which section the screenshot should belong to by matching
         # keywords from the subject against known section titles
@@ -1401,6 +1494,72 @@ def main() -> None:
         print(f"  [warn] {dd_errors} 处数据字典/内部标识符引用——应替换为对应的中文含义")
     else:
         print("  OK: 无数据字典或内部标识符泄漏")
+
+    # ── 检查 23: 同批模板化结构检查（v1.8：前移到内容质量门禁，同批同构早拦截） ──
+    print(); _print_gate_header(23, GATE_PROFILES)
+    try:
+        from batch_structure_check import run as batch_run
+        sibling_manuals = []
+        parent = manual_path.parent.parent.parent
+        if parent.exists():
+            for d in parent.iterdir():
+                if not d.is_dir():
+                    continue
+                sm = d / "草稿" / "操作手册.md"
+                if sm.exists() and sm != manual_path:
+                    sibling_manuals.append(sm)
+        if len(sibling_manuals) >= 1:
+            batch_report = batch_run([manual_path] + sibling_manuals, batch_id=parent.name)
+            my_name = manual_path.parent.parent.name
+            # 确定性硬错误（文件缺失/编号错误/重复粘贴）——硬门禁
+            for e in batch_report.get("errors") or []:
+                if my_name not in e:
+                    all_warnings.append(f"  [同批警示-兄弟任务] {e}")
+                    print(f"  WARNING(兄弟任务): {e}")
+                    continue
+                all_errors.append(f"同批确定性结构检查失败: {e}")
+                print(f"  ERROR: {e}")
+            # 相似度风险分级（方案 v2 决策④：只出风险等级，高风险人工看、中低风险放行，不自动阻断）
+            my_high = my_medium = 0
+            for r in batch_report.get("risks") or []:
+                involves_me = any(my_name in p for p in (r.get("pair") or []))
+                level = r.get("level", "")
+                pair = " 与 ".join(r.get("pair") or [])
+                if involves_me and level == "high":
+                    my_high += 1
+                    all_warnings.append(f"  [高风险-需人工复核] {pair}: {r.get('detail','')}")
+                    print(f"  RISK-HIGH(需人工复核): {pair}: {r.get('detail','')}")
+                elif involves_me and level == "medium":
+                    my_medium += 1
+                    all_warnings.append(f"  [中风险-建议复核] {pair}: {r.get('detail','')}")
+                    print(f"  RISK-MEDIUM(建议复核): {pair}: {r.get('detail','')}")
+                else:
+                    print(f"  RISK-{level.upper()}(提示): {pair}: {str(r.get('detail',''))[:60]}")
+            if my_high or my_medium:
+                print(f"  相似度风险：本任务高风险 {my_high} 项、中风险 {my_medium} 项——高风险需人工复核后再定稿")
+            if not all_errors:
+                print(f"  OK: 与 {len(sibling_manuals)} 个同批任务结构检查完成（确定性 0 错误；相似度按风险分级提示）")
+        else:
+            print("  OK: 无同批兄弟任务手册，跳过同构检查")
+    except ImportError:
+        print("  SKIP: batch_structure_check 不可用")
+
+    # ── 检查 24: 段落节奏观察（防模板化指南 §2，软提示不阻断） ──
+    print(); _print_gate_header(24, GATE_PROFILES)
+    long_paras = 0
+    for para in text.split("\n\n"):
+        s = para.strip()
+        if not s or s.startswith(("#", "|", "【", "-", "**", ">", "!")):
+            continue
+        han = len(re.findall(r"[\u4e00-\u9fff]", s))
+        if han >= 180:
+            long_paras += 1
+            if long_paras <= 3:
+                print(f"  [提示] {han} 字段落过长：{s[:40]}…… 建议按语义边界拆分为 40-120 字段落")
+    if long_paras:
+        all_warnings.append(f"段落节奏提示：{long_paras} 个超过 180 字的自然段，建议按语义边界拆分（防模板化指南 §2）")
+    else:
+        print("  OK: 无超长自然段，段落节奏健康")
 
     # ── 判定 ──
     print("\n" + "=" * 60)

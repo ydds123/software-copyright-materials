@@ -11,6 +11,8 @@ that gap count reaches zero before the manual is confirmed.
 """
 
 from __future__ import annotations
+SCRIPT_INTERFACE = "internal-module"
+SCRIPT_INTERFACE_REASON = "evidence-gap routing helper imported by generate_manual_draft; no CLI surface"
 
 import re
 from typing import Any

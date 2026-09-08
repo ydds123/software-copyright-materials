@@ -93,10 +93,13 @@ def check_lark_user_auth() -> tuple[bool, str]:
         status = json.loads(output)
     except json.JSONDecodeError:
         return False, output
-    ready = status.get("identity") == "user" and status.get("tokenStatus") == "valid"
+    user_status = status.get("identities", {}).get("user", {})
+    token_status = status.get("tokenStatus") or user_status.get("tokenStatus")
+    user_name = status.get("userName") or user_status.get("userName") or "unknown user"
+    ready = status.get("identity") == "user" and token_status == "valid"
     if ready:
-        return True, f"user token valid: {status.get('userName', 'unknown user')}"
-    return False, str(status.get("note") or f"identity={status.get('identity')}, tokenStatus={status.get('tokenStatus')}")
+        return True, f"user token valid: {user_name}"
+    return False, str(status.get("note") or f"identity={status.get('identity')}, tokenStatus={token_status}")
 
 
 def is_feishu_document_target(value: str | None) -> bool:
@@ -193,11 +196,16 @@ def check_environment(skill_dir: Path, feishu_doc: str = "", skip_feishu: bool =
     whiteboard_cli_ok, whiteboard_cli_version = (
         (False, "skipped")
         if skip_feishu
-        else command_version(["npx", "-y", "@larksuite/whiteboard-cli@^0.2.10", "-v"])
+        else command_version(["npx", "-y", "@larksuite/whiteboard-cli@^0.2.13", "-v"])
+    )
+    sharp_cli_ok, sharp_cli_version = (
+        (False, "skipped")
+        if skip_feishu
+        else command_version(["npx", "-y", "sharp-cli", "--version"])
     )
     feishu_doc = feishu_doc.strip()
     feishu_doc_ready = is_feishu_document_target(feishu_doc)
-    charts_ready = not skip_feishu and lark_cli_ok and lark_user_auth_ok and whiteboard_cli_ok and feishu_doc_ready
+    charts_ready = not skip_feishu and lark_cli_ok and lark_user_auth_ok and whiteboard_cli_ok and sharp_cli_ok and feishu_doc_ready
 
     final_docx_mode = "docx-openxml" if docx_ready else ("python-docx" if python_docx else "basic-ooxml")
     action_items: list[str] = []
@@ -210,6 +218,8 @@ def check_environment(skill_dir: Path, feishu_doc: str = "", skip_feishu: bool =
             action_items.append("运行 lark-cli auth login --recommend 完成用户授权，或明确选择 --skip-feishu")
         if not whiteboard_cli_ok:
             action_items.append("确认 npx 可调用 @larksuite/whiteboard-cli，或明确选择 --skip-feishu")
+        if not sharp_cli_ok:
+            action_items.append("确认 npx 可调用 sharp-cli 完成 SVG 白底 PNG 转换，或明确选择 --skip-feishu")
         if not feishu_doc_ready:
             action_items.append("用 --feishu-doc 指定可编辑的飞书在线文档 URL/token，或明确选择 --skip-feishu")
     requires_user_input = bool(action_items)
@@ -226,6 +236,7 @@ def check_environment(skill_dir: Path, feishu_doc: str = "", skip_feishu: bool =
             "lark_cli": lark_cli_ok,
             "lark_user_auth": lark_user_auth_ok,
             "whiteboard_cli": whiteboard_cli_ok,
+            "sharp_cli": sharp_cli_ok,
             "feishu_target_document": feishu_doc_ready,
             "feishu_charts": charts_ready,
             "feishu_skipped": skip_feishu,
@@ -235,6 +246,7 @@ def check_environment(skill_dir: Path, feishu_doc: str = "", skip_feishu: bool =
             "dotnet": dotnet_version,
             "lark_cli": lark_cli_version,
             "whiteboard_cli": whiteboard_cli_version,
+            "sharp_cli": sharp_cli_version,
         },
         "feishu": {
             "target_document": feishu_doc or None,
@@ -285,6 +297,7 @@ def write_markdown(path: Path, data: dict[str, Any]) -> None:
         f"- lark-cli：{'可用' if caps['lark_cli'] else '不可用'}（{data['versions']['lark_cli']}）",
         f"- 用户授权：{'已跳过检查' if caps['feishu_skipped'] else ('有效' if caps['lark_user_auth'] else '无效或未登录')}（{data['feishu']['user_auth_status']}）",
         f"- whiteboard-cli：{'已跳过检查' if caps['feishu_skipped'] else ('可用' if caps['whiteboard_cli'] else '不可用')}（{data['versions']['whiteboard_cli']}）",
+        f"- sharp-cli：{'已跳过检查' if caps['feishu_skipped'] else ('可用' if caps['sharp_cli'] else '不可用')}（{data['versions']['sharp_cli']}）",
         "",
         "### 第二步：目标在线文档",
         "",

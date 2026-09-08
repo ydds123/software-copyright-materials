@@ -7,6 +7,8 @@ ONLY intercepts:
 
 Everything else passes through immediately.
 """
+SCRIPT_INTERFACE = "internal-module"
+SCRIPT_INTERFACE_REASON = "PreToolUse hook entrypoint (stdin JSON), not a CLI"
 
 import json
 import re

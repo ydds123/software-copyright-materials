@@ -271,7 +271,7 @@ class LineRangeExtractionTest(unittest.TestCase):
             json.dumps({"material-plan": {"confirmed": True, "artifact_sha256": "x"}}, ensure_ascii=False),
             encoding="utf-8",
         )
-        all_lines, manifest = collect_code_lines(root, selection)
+        all_lines, manifest, _layout = collect_code_lines(root, selection)
         body = [l for l in all_lines if l.startswith("line ")]
         self.assertEqual(body, [f"line {i}" for i in range(5, 11)])
         self.assertEqual(manifest[0]["selected_line_start"], 5)

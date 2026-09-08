@@ -1,0 +1,124 @@
+{
+  "schema_version": "2.0.0",
+  "name": "software-copyright-materials",
+  "title": "软件著作权申请资料生成",
+  "job_to_be_done": "从真实项目源码生成可提交的中国软件著作权申请资料：程序鉴别材料（前30+后30页代码）、操作手册、申请表信息与正式 DOCX，全程分阶段门禁、用户确认后交付。",
+  "trigger_surface": {
+    "description": "Generate guided Chinese software copyright application materials from a real project. Use this skill when the user asks for 软件著作权, 软著申请资料, 软著代码材料, 操作手册, 申请表信息, or wants Word materials for software copyright registration. The workflow analyzes the imported project, extracts real source code, creates Markdown drafts for user confirmation, then uses bundled DOCX tooling to produce final Word documents.\n",
+    "should_trigger": [
+      "用户要求生成软著申请资料、程序鉴别材料、文档鉴别材料、操作手册、申请表信息",
+      "用户提供 doc.weixin.qq.com 等软著相关文档链接或要求整理软著材料",
+      "用户要求从项目源码抽取软著代码材料（前30页+后30页）",
+      "用户要求审查或重新生成已有软著草稿/正式资料"
+    ],
+    "should_not_trigger": [
+      "普通的代码编写、调试、重构任务（与软著申报无关）",
+      "单纯的文档格式转换（不涉及软著申报流程）",
+      "与软件著作权登记无关的法律咨询"
+    ],
+    "edge_cases": [
+      "候选源码不足 60 页时需要停止并让用户补充选择",
+      "项目有多个仓库（前端/后端/App）时业务理解必须覆盖全部端",
+      "用户要求跳过飞书/图表/截图时需明确记录，不得自动跳过"
+    ]
+  },
+  "workflow": {
+    "steps": [
+      "init_task.py 登记任务并创建目录结构",
+      "check_environment.py 环境检查（DOCX 完整环境、飞书 CLI）",
+      "analyze_project.py + generate_business_context.py 收集证据，模型研判业务理解（manual_modules 含 evidence）",
+      "模型直写操作手册，content_quality_check.py 22 项质检",
+      "propose_code_selection.py 生成候选清单与模块覆盖表，模型填写 selected/model_reason",
+      "extract_code_material.py 按选择抽取代码（marker + 全行 + 空行，50 行/页，前30+后30）",
+      "generate_application_info.py 生成申请表信息",
+      "截图方式选择与截图整理",
+      "markdown 门禁确认后 build_docx_from_md.py 生成正式资料",
+      "三轮验证 + 最终件复检"
+    ],
+    "decision_points": [
+      "业务理解口径（软件全称、模块范围、闭环链路）必须用户确认",
+      "代码文件选择（selected/model_reason）必须用户确认",
+      "申请表硬件/系统环境字段必须用户确认",
+      "截图方式四选一（chrome-devtools/computer-use/user-supplied/skip）",
+      "v1 legacy 与 v2 证据计划路径选择（多仓库/严格代表性管控优先 v2）"
+    ],
+    "failure_modes": [
+      "材料过期：legacy 路径无 sha256 锁定，抽取后源码变更导致材料与当前源码不一致",
+      "抽取顺序被 propose 重跑重置，前30+后30 裁掉核心模块代码",
+      "覆盖缺口带空说明通过 code-selection 门禁",
+      "补充文件标注为 evidence，模块-代码依赖失真"
+    ]
+  },
+  "resources": {
+    "references": [
+      "references/skill-full-spec.md",
+      "references/copyright_material_rules.md",
+      "references/code_selection_rules.md",
+      "references/manual_authoring_spec.md",
+      "references/manual_quality_spec.md",
+      "references/module_classification_rules.md",
+      "references/application_fields.md",
+      "references/business_understanding_rules.md"
+    ],
+    "scripts": [
+      "scripts/init_task.py",
+      "scripts/check_environment.py",
+      "scripts/analyze_project.py",
+      "scripts/generate_business_context.py",
+      "scripts/generate_manual_draft.py",
+      "scripts/propose_code_selection.py",
+      "scripts/extract_code_material.py",
+      "scripts/generate_application_info.py",
+      "scripts/capture_screenshots.py",
+      "scripts/build_docx_from_md.py",
+      "scripts/confirm_stage.py",
+      "scripts/gate_check.py",
+      "scripts/gate_dispatcher.py",
+      "scripts/safe_write.py"
+    ],
+    "assets": [
+      "vendor/docx-toolkit"
+    ],
+    "reports": [
+      "reports/security_trust_report.md",
+      "reports/skill-review-reports.md"
+    ]
+  },
+  "eval_plan": {
+    "trigger": [
+      "软著、程序鉴别材料、文档鉴别材料、操作手册、申请表信息 等触发词路由测试"
+    ],
+    "output": [
+      "代码-前后30页.md 页码序列 = 1-30 + (总页数-29)..总页数",
+      "程序鉴别材料 docx 页眉 = 软件全称 + 版本号 + 第 N 页",
+      "代码提取清单 material_line_start/end 与重建序列一致"
+    ],
+    "adversarial": [
+      "源码在抽取后变更（材料过期）",
+      "propose 重跑后 files 顺序重置",
+      "evidence 路径写错导致覆盖表误报缺失",
+      "补充文件标注为 evidence"
+    ],
+    "baseline": "2026-09-01 双任务（化桉特殊作业报警/化桉智能巡检）全流程回归通过"
+  },
+  "risk": {
+    "output_risk": "high",
+    "execution_risk": "medium",
+    "trust_boundary": "team"
+  },
+  "governance": {
+    "owner": "Fokkyp",
+    "maturity": "production",
+    "review_cadence": "per-release",
+    "review_due": "2027-09-01"
+  },
+  "targets": [
+    "claude",
+    "generic"
+  ],
+  "source_files": [
+    "SKILL.md",
+    "manifest.json",
+    "agents/interface.yaml"
+  ]
+}

@@ -67,7 +67,8 @@ DOCX 基础设施层
 
 - .NET SDK 8.0+：用于完整 OpenXML DOCX 生成和校验
 - Node.js（含 `npm`/`npx`）：用于安装和调用飞书 CLI
-- `lark-cli` 与 `whiteboard-cli`：用于在指定飞书在线文档中生成和导出技术图表
+- `lark-cli` 与 `whiteboard-cli`：用于在指定飞书在线文档中生成技术图表并导出内容自适应 SVG
+- `sharp-cli`（通过 `npx -y sharp-cli` 调用）：将透明 SVG 转为同名白底 PNG，供 Word 嵌入
 
 安装 Python 依赖：
 
@@ -119,10 +120,22 @@ npm install -g @larksuite/cli
 npx skills add larksuite/cli -y -g
 ```
 
-检查画板转换工具：
+检查画板与 SVG 转换工具：
 
 ```powershell
-npx -y @larksuite/whiteboard-cli@^0.2.10 -v
+npx -y @larksuite/whiteboard-cli@^0.2.13 -v
+npx -y sharp-cli --help
+```
+
+技术图表默认使用自适应 SVG 导出，并生成 Word 白底 PNG：
+
+```powershell
+python scripts/export_whiteboard_charts.py `
+  --chart-list "<任务目录>/草稿/技术图表清单.md" `
+  --output-dir "<任务目录>/截图" `
+  --manual "<任务目录>/草稿/操作手册.md" `
+  --width 2400 `
+  --height 3200
 ```
 
 运行软著环境检查时指定在线文档：

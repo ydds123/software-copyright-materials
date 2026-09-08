@@ -6,10 +6,23 @@
 
 ## 1. 前置条件
 
-- `business` 门禁已确认。
+- `business` 门禁已确认（含篇幅规划，见下）。
 - 任务目录中存在 `analysis/project.json`、`草稿/业务理解.md` 和 `草稿/业务理解.json`。
 - `草稿/业务理解.json` 已包含 `product_composition`、`closed_loop_validation`、`target_users`、`operation_flow`、`manual_modules`、`system_requirements`、`faq` 和 `glossary`。
 - 每个 `manual_modules` 条目已标注模块类型、客户端、真实入口和源码证据。
+- `草稿/材料证据计划.json` 已写入 `document_plan`（类型/依据/骨架要素），同批任务类型互异。
+
+篇幅规划（v1.8，与 business 门禁一并确认）：
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/propose_coverage_plan.py \
+  --business 草稿/业务理解.json \
+  --out-dir 草稿 --confirm
+```
+
+产出 `草稿/篇幅规划.json`（三线配额：代码材料 60 页 / 手册篇幅 / 截图，二维矩阵 = 业务重要性 × 代码质量）。
+`confirm_stage.py --stage business` 会校验篇幅规划覆盖全部 manual_modules。
+手册详写/顺带、代码必进/可进/不进、截图必拍/选拍均以此表为准，后续覆盖门禁按此分级校验。
 
 开始前运行：
 
@@ -19,12 +32,37 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/gate_check.py --workdir <任务目录> --bef
 
 ## 2. 默认读取集
 
-创建操作手册时，默认只读取：
+创建操作手册前先决策文档类型（v1.6，防同批同构）：
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/propose_document_plan.py \
+  --plan 草稿/材料证据计划.json \
+  --business 草稿/业务理解.json \
+  --confirm
+```
+
+产出 `document_plan`（类型/依据/骨架要素/同批提示）。同批任务需逐个运行，后者自动避让前者已占用的类型。设计/混合型文档另需算法章节素材：
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/propose_algorithm_sections.py \
+  --plan 草稿/材料证据计划.json --out-dir 草稿
+```
+
+截图清单在撰写前就绪（早触发，供用户安排拍摄）：
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/propose_screenshot_plan.py \
+  --business 草稿/业务理解.json --out-dir 草稿
+```
+
+默认读取集：
 
 1. `references/manual_workflow.md`
 2. `references/manual_authoring_spec.md`
-3. `草稿/业务理解.json`
-4. `manual_modules[].evidence` 指向的必要项目源码
+3. `references/防模板化指南.md`（同批同构、段落节奏、表格平衡、截图命名、术语别名陷阱）
+4. `草稿/业务理解.json`
+5. `草稿/算法章节素材.md`（design_description/hybrid 类型）
+6. `manual_modules[].evidence` 指向的必要项目源码
 
 如 `草稿/业务理解.json` 已提供完整菜单路径、页面字段、状态和反馈，不重复扫描无关项目文件。
 
@@ -76,9 +114,11 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/content_quality_check.py --manual 草稿/操
 
 质量检查必须返回 0 errors。检查失败时，按 `manual_quality_spec.md` 修正后重新运行。
 
+**同批模板化检查（v1.8 起并入内容质量门禁 gate 23）**：`content_quality_check.py` 会自动扫描同批兄弟任务的 `草稿/操作手册.md`，检查标题重合率、表格结构指纹、重复段落与重复小节。本任务与兄弟任务的同构会阻断；仅涉及兄弟任务自身的问题降级为警告。manual 门禁确认时保留同构检查作为双保险。
+
 ## 6. 确认门禁
 
-内容质量通过后记录 `content-quality` 门禁，然后立即停止并让用户确认完整操作手册。用户确认后记录 `manual` 门禁：
+内容质量通过后记录 `content-quality` 门禁，然后立即停止并让用户确认完整操作手册。用户确认后记录 `manual` 门禁（v1.6：manual 门禁自动运行同批结构同构检查，目录/表格/段落同构将被阻断）：
 
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/confirm_stage.py \

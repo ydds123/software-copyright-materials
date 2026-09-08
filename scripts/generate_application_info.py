@@ -274,7 +274,7 @@ def build_fields(
         "软件的技术特点": tech_char,
         # 2026 新政附加
         "页数": str(manifest.get("total_pages") or "待用户确认"),
-        "AI 开发限制声明": "待用户确认（需手抄：未使用 AI 开发编写代码、撰写文档或生成登记申请材料）",
+        "AI 开发限制声明": "（留空，不自动填：是否使用 AI、如何声明由用户人工决定并签署）",
         "经办人姓名": "待用户确认",
         "经办人身份证号码": "待用户确认",
         "经办人职务": "待用户确认",
@@ -363,16 +363,14 @@ def total_memory_bytes() -> int | None:
 
 
 def current_hardware_environment() -> str:
+    # 申请表字段上限 50 字：只保留核数/架构/内存/硬盘，不写 CPU 处理器全名（如 Intel64 Family 6 Model 151 超长）
     parts: list[str] = []
     cpu_count = os.cpu_count()
     machine = platform.machine()
-    processor = platform.processor()
-    if processor and processor != machine and processor.lower() != "arm":
-        parts.append(f"CPU {processor}")
     if cpu_count:
-        parts.append(f"CPU {cpu_count}核")
+        parts.append(f"{cpu_count} 核")
     if machine:
-        parts.append(f"架构 {machine}")
+        parts.append(f"{machine} 架构")
     memory = format_gb(total_memory_bytes())
     if memory:
         parts.append(f"内存 {memory}")
@@ -500,9 +498,9 @@ def infer_runtime_support(analysis: dict[str, Any], project: Path) -> str:
     if package_info or deps or frameworks & {"Vue", "React", "Vite", "Next.js", "Nuxt", "Svelte", "Astro", "Angular"}:
         if not has_support_term(support, "node"):
             node_engine = str((package_info.get("engines") or {}).get("node") or "").strip()
-            support.append(f"Node.js {node_engine}" if node_engine else "Node.js（按项目 package.json 要求确认版本）")
+            support.append(f"Node.js {node_engine}" if node_engine else "Node.js")
         support.append(detect_package_manager(project, package_path))
-        support.append("Chrome、Edge 或 Safari 等现代浏览器")
+        support.append("Chrome 或 Edge 浏览器")
     if ((project / "pyproject.toml").exists() or any(project.glob("*/pyproject.toml"))) and not has_support_term(support, "python"):
         support.append("Python（按项目 pyproject.toml 要求确认版本）")
     if ((project / "requirements.txt").exists() or list(project.glob("*/requirements*.txt"))) and not has_support_term(support, "python"):

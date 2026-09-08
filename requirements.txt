@@ -1,0 +1,5 @@
+# 运行时依赖（环境检查校验的基线；版本为开发时验证版本）
+python-docx>=1.1.0
+pdfplumber>=0.11.0
+PyYAML>=6.0
+Pillow>=10.0

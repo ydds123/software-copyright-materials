@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -68,6 +69,30 @@ def confirm_business(workdir: Path, note: str) -> Path:
     path = workdir / "草稿/业务理解.json"
     if not path.exists():
         raise SystemExit("Missing 草稿/业务理解.json")
+    # v1.8 篇幅规划并入 business 确认：每个 manual_module 必须有配额行
+    cp_path = workdir / "草稿/篇幅规划.json"
+    if not cp_path.exists():
+        raise SystemExit(
+            "STOP_FOR_USER\n"
+            "NEXT_ACTION: 篇幅规划缺失。请先运行 propose_coverage_plan.py 生成三线配额表，"
+            "确认每个模块的 importance/材料/手册/截图配额后，与 business 门禁一并确认。"
+        )
+    try:
+        biz = read_json(path)
+        cp = json.loads(cp_path.read_text(encoding="utf-8"))
+        planned = {r.get("module") for r in cp.get("modules", [])}
+        titles = {str(m.get("title") or "") for m in biz.get("manual_modules", [])}
+        missing = titles - planned
+        if missing:
+            raise SystemExit(
+                "STOP_FOR_USER\n"
+                f"NEXT_ACTION: 篇幅规划缺少以下模块的配额行：{'、'.join(sorted(missing))}。"
+                "请重新运行 propose_coverage_plan.py --confirm 后确认 business 门禁。"
+            )
+    except SystemExit:
+        raise
+    except Exception as exc:
+        raise SystemExit(f"STOP_FOR_USER\nNEXT_ACTION: 篇幅规划.json 无法解析：{exc}")
     return write_gate(workdir, "business", note)
 
 
@@ -95,17 +120,22 @@ def _material_plan_guard(workdir: Path) -> None:
         )
 
 
+def gate_switch(workdir: Path, name: str) -> str:
+    """Read switches.<name> from 门禁状态.json; default on."""
+    gates = load_gates(workdir)
+    return str(gates.get('switches', {}).get(name, 'on'))
+
+
 def confirm_material_plan(workdir: Path, note: str) -> Path:
     """Confirm the material evidence plan after evidence_plan_check passes."""
     plan_path = workdir / "草稿" / MATERIAL_PLAN_FILE
     if not plan_path.exists():
         raise SystemExit("Missing 草稿/材料证据计划.json")
     checker = Path(__file__).resolve().parent / "evidence_plan_check.py"
-    result = subprocess.run(
-        [sys.executable, str(checker), "--plan", str(plan_path)],
-        capture_output=True,
-        text=True,
-    )
+    cmd = [sys.executable, str(checker), "--plan", str(plan_path)]
+    if gate_switch(workdir, "d-grade-block") == "on":
+        cmd.append("--block-d-grade")
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     print(result.stdout, end="")
     if result.stderr:
         print(result.stderr, end="", file=sys.stderr)
@@ -114,6 +144,48 @@ def confirm_material_plan(workdir: Path, note: str) -> Path:
             "STOP_FOR_USER\n"
             "NEXT_ACTION: evidence_plan_check 未通过（见上方输出）。请修复计划后重新运行。"
         )
+
+    # ── v1.5 接线：视觉证据申报前置（switches.visual-evidence != off 时）──
+    if gate_switch(workdir, "visual-evidence") != "off":
+        plan = read_json(plan_path)
+        visual = plan.get("visual_evidence") or []
+        features = plan.get("features") or []
+        core = [f for f in features if f.get("importance") == "core"]
+        acquired = [v for v in visual if str(v.get("acquisition_status") or "").startswith(("acquired", "exempted"))]
+        if core and not visual:
+            raise SystemExit(
+                "STOP_FOR_USER\n"
+                "NEXT_ACTION: 视觉证据尚未申报。请在 材料证据计划.json 的 visual_evidence 中为每个核心功能申报截图"
+                "（acquisition_status=acquired/exempted/pending，exempted 必须附 visual_exemption 理由与替代证据）。"
+                "如确认暂时跳过截图，需用户明确设置 switches.visual-evidence=off 后重新确认。"
+            )
+        pending = [v.get("evidence_id") for v in visual if str(v.get("acquisition_status") or "") == "pending"]
+        if pending:
+            raise SystemExit(
+                "STOP_FOR_USER\n"
+                f"NEXT_ACTION: 视觉证据申报清单尚有 {len(pending)} 项 pending，全部 pending 时不得进入文档生成阶段。"
+                "请逐张标记 acquired / exempted 后重新确认。"
+            )
+
+    # ── v1.5 接线：申请独立性提示（sibling 计划存在时）──
+    plan = read_json(plan_path)
+    siblings = plan.get("sibling_application_ids") or []
+    if siblings:
+        checker = Path(__file__).resolve().parent / "independence_check.py"
+        for sib in siblings:
+            sib_plan = workdir / sib / "草稿" / MATERIAL_PLAN_FILE
+            if sib_plan.exists():
+                r = subprocess.run(
+                    [sys.executable, str(checker), "--plan-a", str(plan_path), "--plan-b", str(sib_plan)],
+                    capture_output=True, text=True, encoding="utf-8", errors="replace",
+                )
+                print(r.stdout, end="")
+                if r.returncode != 0:
+                    raise SystemExit(
+                        "STOP_FOR_USER\n"
+                        "NEXT_ACTION: 申请独立性检查未通过（见上方输出）。"
+                        "请确认两个软件可独立运行、可分别交付，或在计划中填写 independence_declaration。"
+                    )
     return write_gate(
         workdir,
         "material-plan",
@@ -145,7 +217,7 @@ def confirm_code_selection(workdir: Path, note: str) -> Path:
             + "\n".join(f"- {item}" for item in missing_reason[:20])
         )
 
-    # ── 模块代码覆盖验证 ──
+    # ── 模块代码覆盖验证（硬阻断：缺口必须有说明） ──
     biz_path = workdir / "草稿/业务理解.json"
     if biz_path.exists():
         biz = read_json(biz_path)
@@ -157,6 +229,14 @@ def confirm_code_selection(workdir: Path, note: str) -> Path:
             f.get("path", "").replace("\\", "/")
             for f in selected
         }
+
+        def _matches_any(ev: str, pool: set[str]) -> bool:
+            """evidence 可为绝对路径（含项目根前缀）或相对路径，与池内路径尾缀匹配。"""
+            ev = ev.replace("\\", "/")
+            if ev in pool:
+                return True
+            return any(ev.endswith(p) or p.endswith(ev) for p in pool)
+
         modules = biz.get("manual_modules") or []
         weak_modules: list[str] = []
         for m in modules:
@@ -167,26 +247,63 @@ def confirm_code_selection(workdir: Path, note: str) -> Path:
             ]
             if not evidence:
                 continue
-            in_candidates = [e for e in evidence if e in candidate_paths]
+            in_candidates = [e for e in evidence if _matches_any(e, candidate_paths)]
             if not in_candidates:
                 weak_modules.append(
                     f"{title} — 所有 evidence 文件均不在候选池中"
                 )
             else:
-                in_selected = [e for e in evidence if e in selected_paths]
+                in_selected = [e for e in evidence if _matches_any(e, selected_paths)]
                 if not in_selected:
                     weak_modules.append(
                         f"{title} — evidence 文件在候选池中但未被选中：{', '.join(in_candidates[:3])}"
                     )
 
-        if weak_modules and not data.get("module_code_coverage"):
+        if weak_modules:
+            coverage_notes = str(data.get("coverage_notes") or "").strip()
+            if not coverage_notes:
+                raise SystemExit(
+                    "STOP_FOR_USER\n"
+                    "NEXT_ACTION: 以下模块在操作手册中有功能描述但无代码覆盖：\n"
+                    + "\n".join(f"- {wm}" for wm in weak_modules)
+                    + "\n请在 草稿/代码文件选择.json 的 coverage_notes 字段说明无法覆盖的原因，"
+                    "或补选对应 evidence 文件后重新确认。"
+                )
             print(
-                f"WARNING: {len(weak_modules)}/{len(modules)} 个模块无代码覆盖：",
+                f"WARNING: {len(weak_modules)}/{len(modules)} 个模块无代码覆盖（已有说明）：",
                 *[f"  - {wm}" for wm in weak_modules],
                 sep="\n",
             )
-            print(
-                "HINT: 这些模块在操作手册中有功能描述但无对应代码材料，可能触发补正。"
+
+        # ── 标注合规校验（回归防线 #4） ──
+        evidence_all = {
+            e.replace("\\", "/").lstrip("./")
+            for m in modules
+            for e in (m.get("evidence") or [])
+        }
+        labeling_issues: list[str] = []
+        for item in selected:
+            item_path = item.get("path", "").replace("\\", "/")
+            tier = str(item.get("selection_tier") or "")
+            reason = str(item.get("model_reason") or "")
+            in_evidence = any(
+                item_path == e or item_path.endswith(e) or e.endswith(item_path)
+                for e in evidence_all
+            )
+            if tier == "evidence" and not in_evidence:
+                labeling_issues.append(
+                    f"{item_path} 标注为 evidence 但不在任何 manual_modules.evidence 中"
+                )
+            if not in_evidence and tier != "supplement" and not reason.startswith("补充"):
+                labeling_issues.append(
+                    f"{item_path} 不在 evidence 清单且未标注为补充（tier={tier}, reason 需以「补充」开头）"
+                )
+        if labeling_issues:
+            raise SystemExit(
+                "STOP_FOR_USER\n"
+                "NEXT_ACTION: 选中文件标注与业务理解 evidence 不一致：\n"
+                + "\n".join(f"- {x}" for x in labeling_issues[:20])
+                + "\n请修正 selection_tier/evidence/model_reason 后重新确认。"
             )
 
     # Sync user_confirmed flag in selection JSON
@@ -249,6 +366,8 @@ def confirm_content_quality(workdir: Path, note: str) -> Path:
         [sys.executable, str(checker), "--manual", str(manual_path)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     # Print checker output so it's visible in the transcript
     print(result.stdout, end="")
@@ -277,6 +396,94 @@ def confirm_manual(workdir: Path, note: str) -> Path:
             "STOP_FOR_USER\n"
             "NEXT_ACTION: 操作手册确认前必须先通过 content-quality 门禁。"
         )
+
+    # v1.6 同批文档结构同构检查（switches.batch-structure != off）
+    switches = gates.get("switches", {})
+    if switches.get("batch-structure", "on") != "off":
+        from batch_structure_check import run as batch_run
+        parent = workdir.parent
+        sibling_manuals = []
+        if parent.exists():
+            for d in parent.iterdir():
+                if not d.is_dir() or d == workdir:
+                    continue
+                sm = d / "草稿" / "操作手册.md"
+                if sm.exists():
+                    sibling_manuals.append(sm)
+        if len(sibling_manuals) >= 1:
+            report = batch_run([manual_path] + sibling_manuals, batch_id=parent.name)
+            my_name = workdir.name
+            my_errors = [e for e in report["errors"] if my_name in e]
+            sibling_errors = [e for e in report["errors"] if my_name not in e]
+            for e in sibling_errors:
+                # 仅涉及兄弟任务自身的问题：警示不阻断本任务（与 content_quality_check gate 23 策略一致）
+                print(f"  WARNING(兄弟任务): {e}")
+            for e in my_errors:
+                print(f"  ERROR: {e}")
+            # 相似度风险分级（方案 v2 决策④：只提示，不阻断；高风险需人工复核）
+            for r in report.get("risks") or []:
+                involves_me = any(my_name in p for p in (r.get("pair") or []))
+                if involves_me and r.get("level") == "high":
+                    print(f"  RISK-HIGH(需人工复核，不阻断): {' 与 '.join(r.get('pair') or [])}: {r.get('detail','')}")
+                elif involves_me and r.get("level") == "medium":
+                    print(f"  RISK-MEDIUM(建议复核，不阻断): {' 与 '.join(r.get('pair') or [])}: {r.get('detail','')}")
+            if my_errors:
+                raise SystemExit(
+                    "STOP_FOR_USER\n"
+                    "NEXT_ACTION: 本任务存在确定性结构错误（文件缺失/章节编号错误/重复粘贴，见上）。"
+                    "请修复后重试；相似度风险为提示项，高风险经人工复核确认可辩护后即可继续。"
+                )
+            if sibling_errors:
+                print(f"BATCH STRUCTURE PASS: 本任务与 {len(sibling_manuals)} 个同批任务无确定性错误；兄弟任务之间存在 {len(sibling_errors)} 项确定性错误（警示，建议后续批次差异化处理）")
+            else:
+                print(f"BATCH STRUCTURE PASS: 与 {len(sibling_manuals)} 个同批任务无同构")
+
+    # v1.7 手册 ↔ 材料三口径覆盖门禁（switches.doc-material-coverage != off）
+    if switches.get("doc-material-coverage", "on") != "off":
+        cov_checker = Path(__file__).resolve().parent / "verify_doc_material_coverage.py"
+        business_path = workdir / "草稿" / "业务理解.json"
+        plan_path = workdir / "草稿" / "材料证据计划.json"
+        manifest_path = workdir / "草稿" / "代码提取清单.json"
+        if business_path.exists() and plan_path.exists() and manifest_path.exists():
+            cov = subprocess.run(
+                [sys.executable, str(cov_checker),
+                 "--business", str(business_path),
+                 "--plan", str(plan_path),
+                 "--manifest", str(manifest_path),
+                 "--manual", str(manual_path)],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+            )
+            print(cov.stdout, end="")
+            if cov.stderr:
+                print(cov.stderr, end="", file=sys.stderr)
+            if cov.returncode == 1:
+                raise SystemExit(
+                    "STOP_FOR_USER\n"
+                    "NEXT_ACTION: 手册与程序鉴别材料覆盖门禁未通过（核心模块/功能证据缺失，见上）。"
+                    "请补全 60 页材料的证据文件或修正手册章节后重试。"
+                )
+
+    # v1.7 手册事实断言 ↔ 源码核对（枚举漂移阻断 + 公式清单；switches.manual-facts != off）
+    if switches.get("manual-facts", "on") != "off":
+        facts_checker = Path(__file__).resolve().parent / "verify_manual_facts.py"
+        plan_json = read_json(plan_path) if plan_path.exists() else {}
+        src_roots = [r.get("path") for r in plan_json.get("input_roots", []) if r.get("path")]
+        if src_roots and all(Path(r).exists() for r in src_roots):
+            facts = subprocess.run(
+                [sys.executable, str(facts_checker), "--manual", str(manual_path),
+                 "--source-roots"] + src_roots,
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+            )
+            print(facts.stdout, end="")
+            if facts.stderr:
+                print(facts.stderr, end="", file=sys.stderr)
+            if facts.returncode == 1:
+                raise SystemExit(
+                    "STOP_FOR_USER\n"
+                    "NEXT_ACTION: 手册事实断言与源码不一致（枚举漂移，见上）。"
+                    "请按核对清单修正手册枚举/状态表述后重试。"
+                )
+
     return write_gate(workdir, "manual", note)
 
 
@@ -330,6 +537,17 @@ def confirm_markdown(workdir: Path, note: str) -> Path:
         "screenshot-method": "截图方式尚未确认",
         "application-fields": "申请表字段尚未确认",
     }
+    # v2 路径：材料证据计划（schema_version=3）替代 code-selection 门禁
+    v2_plan = workdir / "草稿" / "材料证据计划.json"
+    is_v2 = False
+    if v2_plan.exists():
+        try:
+            is_v2 = json.loads(v2_plan.read_text(encoding="utf-8")).get("schema_version") == 3
+        except Exception:
+            pass
+    if is_v2:
+        gate_names = [("material-plan" if g == "code-selection" else g) for g in gate_names]
+        gate_labels["material-plan"] = "材料证据计划尚未确认"
     issues = [gate_labels[g] for g in gate_names if not gates.get(g, {}).get("confirmed")]
     pending = pending_application_fields(workdir / "草稿/申请表信息.md")
     if pending:
@@ -341,6 +559,25 @@ def confirm_markdown(workdir: Path, note: str) -> Path:
             "NEXT_ACTION: Markdown 草稿确认前需要先处理以下事项：\n"
             + "\n".join(f"- {item}" for item in issues)
         )
+
+    # ── v1.5 接线：逻辑一致性检查（switches.logic-consistency != off 时）──
+    if gate_switch(workdir, "logic-consistency") != "off":
+        manual_path = workdir / "草稿/操作手册.md"
+        plan_path = workdir / "草稿" / MATERIAL_PLAN_FILE
+        if manual_path.exists():
+            checker = Path(__file__).resolve().parent / "logic_consistency_check.py"
+            cmd = [sys.executable, str(checker), "--manual", str(manual_path)]
+            if plan_path.exists():
+                cmd += ["--plan", str(plan_path)]
+            result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+            print(result.stdout, end="")
+            if result.stderr:
+                print(result.stderr, end="", file=sys.stderr)
+            if result.returncode != 0:
+                raise SystemExit(
+                    "STOP_FOR_USER\n"
+                    "NEXT_ACTION: 逻辑一致性检查未通过（见上方输出）。请修正文档中的矛盾后重新确认。"
+                )
 
     # ── Cooldown check: prevent rapid-fire confirmations ──
     from datetime import datetime, timezone, timedelta

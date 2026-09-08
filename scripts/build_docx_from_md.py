@@ -8,6 +8,7 @@ import html
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import zipfile
@@ -33,7 +34,15 @@ BLACK_RGB = "000000"
 
 
 def replace_generated_docx(tmp_path: Path, docx_path: Path) -> None:
-    """Replace generated DOCX on Windows where existing files may be briefly held."""
+    """Replace generated DOCX on Windows where existing files may be briefly held.
+    v1.8：覆盖前自动备份旧文件到 .bak（保留用户手工编辑痕迹，防覆盖丢图）。"""
+    if docx_path.exists():
+        try:
+            bak = docx_path.with_suffix(docx_path.suffix + ".bak")
+            import shutil as _shutil
+            _shutil.copy2(docx_path, bak)
+        except Exception:
+            pass
     for attempt in range(5):
         try:
             if docx_path.exists():
@@ -44,6 +53,22 @@ def replace_generated_docx(tmp_path: Path, docx_path: Path) -> None:
             if attempt == 4:
                 raise
             time.sleep(0.25)
+
+
+def _guard_manual_edit(docx_path: Path, md_path: Path, warnings: list) -> None:
+    """v1.8 手工编辑保护：docx 修改时间晚于草稿 md 且大小差异明显时，判定用户手工编辑过，
+    自动备份 .bak 并输出醒目警告，避免无感覆盖用户成果。"""
+    try:
+        if docx_path.exists() and md_path.exists():
+            dm = docx_path.stat().st_mtime
+            mm = md_path.stat().st_mtime
+            if dm > mm + 60:  # docx 在草稿之后被改过
+                warnings.append(
+                    f"⚠️ 检测到 {docx_path.name} 在草稿之后被手工编辑过（已自动备份为 .bak）。"
+                    f"本次构建将覆盖手工版本；如需保留手工成果（如手工贴图），请先将其导出或告知用户。"
+                )
+    except Exception:
+        pass
 
 
 def variant_output_path(path: Path, suffix: str) -> Path:
@@ -217,7 +242,19 @@ def confirmation_issues(workdir: Path) -> list[str]:
         issues.append("操作手册尚未确认：请确认 草稿/操作手册.md 后记录 manual 门禁")
 
     if not gates.get("code-selection", {}).get("confirmed"):
-        issues.append("代码文件选择尚未确认：请确认 草稿/代码文件选择.json 后记录 code-selection 门禁")
+        # v2 路径：材料证据计划替代 code-selection 门禁
+        _v2_plan = workdir / "草稿" / "材料证据计划.json"
+        _is_v2 = False
+        if _v2_plan.exists():
+            try:
+                _is_v2 = read_json(_v2_plan).get("schema_version") == 3
+            except Exception:
+                pass
+        if _is_v2:
+            if not gates.get("material-plan", {}).get("confirmed"):
+                issues.append("材料证据计划尚未确认：请确认 material-plan 门禁")
+        else:
+            issues.append("代码文件选择尚未确认：请确认 草稿/代码文件选择.json 后记录 code-selection 门禁")
 
     if not gates.get("screenshot-method", {}).get("confirmed"):
         issues.append("截图方式尚未确认：请选择截图方式后记录 screenshot-method 门禁")
@@ -439,6 +476,9 @@ def build_code_docx_python(md_path: Path, out_path: Path, software_name: str, ve
         raise RuntimeError(f"No code pages parsed from {md_path}")
 
     document = Document()
+    # python-docx 默认含一个空段落，会占用首页顶部并推后第 1 块，删除之
+    if len(document.paragraphs) == 1 and not document.paragraphs[0].text.strip():
+        document.paragraphs[0]._element.getparent().remove(document.paragraphs[0]._element)
     configure_code_a4(document)
     set_normal_font(document, "Consolas", 7.2)
     set_style_black(document)
@@ -450,9 +490,9 @@ def build_code_docx_python(md_path: Path, out_path: Path, software_name: str, ve
             p.paragraph_format.space_before = Pt(0)
             p.paragraph_format.space_after = Pt(0)
             p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
-            p.paragraph_format.line_spacing = Pt(12)
+            p.paragraph_format.line_spacing = Pt(10.5)
             run = p.add_run(line if line else " ")
-            set_run_font(run, "Consolas", 7.2)
+            set_run_font(run, "Consolas", 6.5)
         if index != len(pages) - 1:
             document.add_page_break()
 
@@ -737,7 +777,6 @@ def add_markdown_table(document: Any, rows: list[list[str]]) -> None:
     if raw_total > A4_CM:
         scale = A4_CM / raw_total
         raw_cm = [w * scale for w in raw_cm]
-
     # 3a — header single-line minimum: measure each header's display width
     #      (CJK = 2.0 units, Latin = 1.0 unit; SimSun 10.5pt ≈ 0.185 cm/unit)
     UNIT_CM = 0.185
@@ -785,6 +824,13 @@ def add_markdown_table(document: Any, rows: list[list[str]]) -> None:
             vAlign.set(qn("w:val"), "center")
             tc_pr.append(vAlign)
 
+    # 6 — v1.8 表格最下一行后自动插入空白行（防表格与后续内容/图片粘连压边线）
+    sp = document.add_paragraph()
+    sp.paragraph_format.space_before = Pt(6)
+    sp.paragraph_format.space_after = Pt(6)
+    sp_run = sp.add_run("")
+    set_run_font(sp_run, "SimSun", 10.5)
+
 
 def parse_table_line(line: str) -> list[str]:
     return [cell.strip() for cell in line.strip().strip("|").split("|")]
@@ -797,7 +843,14 @@ def add_image(document: Any, image_path: Path) -> None:
         set_run_font(run, "SimSun", 10.5)
         return
     try:
-        document.add_picture(str(image_path), width=Inches(5.8))
+        # v1.8 图片上下自动换行：独立段落、居中、上下留间距，避免压相邻表格边线
+        p = document.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p.paragraph_format.space_before = Pt(6)
+        p.paragraph_format.space_after = Pt(6)
+        run = p.add_run()
+        run.add_picture(str(image_path), width=Inches(5.8))
+        document.add_paragraph()  # 图后空行
     except Exception:
         p = document.add_paragraph()
         run = p.add_run(f"[截图无法插入：{image_path}]")
@@ -1112,16 +1165,63 @@ def build_all(workdir: Path, software_name: str, version: str, skip_preview: boo
         ("代码-前后30页.md", f"{safe_name}_程序鉴别材料.docx"),
         ("代码-全部.md", f"{safe_name}_程序鉴别材料.docx"),
     ]
+    # ── v1.6 时效检查进构建链：材料与当前源码不一致时阻断 ──
+    gates = read_json_if_exists(workdir / "门禁状态.json")
+    if str(gates.get("switches", {}).get("material-currency", "on")) != "off":
+        manifest_path = draft_dir / "代码提取清单.json"
+        if manifest_path.exists():
+            import verify_material_currency as vmc
+            manifest = read_json_if_exists(manifest_path)
+            roots = None
+            sel_file = manifest.get("selection_file", "")
+            if sel_file and Path(sel_file).exists():
+                try:
+                    _plan = read_json_if_exists(Path(sel_file))
+                    roots = {r.get("root_id"): Path(r.get("path")) for r in (_plan.get("input_roots") or [])}
+                except Exception:
+                    pass
+            changed, errs = vmc.check(manifest, roots)
+            if changed or errs:
+                print("STOP_FOR_USER")
+                print("NEXT_ACTION: 程序鉴别材料与当前源码不一致（材料已过期），请重新运行 extract_code_material.py --confirm 抽取后再构建。")
+                for c in changed[:10]:
+                    print(f"  - {c['path']}: 清单 {c.get('recorded_lines')} 行, 当前 {c.get('current_lines')} 行")
+                for e in errs[:10]:
+                    print(f"  - {e}")
+                raise SystemExit(2)
     for md_name, docx_name in code_specs:
         md_path = draft_dir / md_name
         if md_path.exists():
             out_path = final_dir / docx_name
+            _guard_manual_edit(out_path, md_path, warnings)
             build_code_docx(md_path, out_path, final_software_name, final_version)
             outputs.append(out_path)
+            # v1.8 渲染后置验证：Word COM 逐页统计（60 页 × 每页 50 行代码），不达标 STOP
+            _verify_ps1 = Path(__file__).resolve().parent / "verify_code_docx_pages.ps1"
+            if _verify_ps1.exists() and sys.platform == "win32" and out_path.exists():
+                try:
+                    _v = subprocess.run(
+                        ["pwsh", "-NoProfile", "-File", str(_verify_ps1),
+                         "-Docx", str(out_path), "-ExpectPages", "60", "-ExpectLines", "50"],
+                        capture_output=True, timeout=180,
+                    )
+                    _vout = (_v.stdout or b"").decode("utf-8", errors="replace").strip()
+                    if _v.returncode == 1:
+                        print("STOP_FOR_USER")
+                        print("NEXT_ACTION: 程序鉴别材料 Word 渲染验证未通过：")
+                        print(_vout)
+                        raise SystemExit(1)
+                    if _v.returncode == 0:
+                        print(f"CODE DOCX VERIFY: {_vout}")
+                except SystemExit:
+                    raise
+                except Exception as _e:
+                    warnings.append(f"Word 渲染验证未执行（{_e}），请人工用 Word 打开核对页数")
 
     manual_md = draft_dir / "操作手册.md"
     if manual_md.exists():
         manual_out = final_dir / f"{safe_name}_文档鉴别材料.docx"
+        _guard_manual_edit(manual_out, manual_md, warnings)
         manual_source = manual_md
         tmp_manual: Path | None = None
         if app_name and app_name != software_name:
@@ -1173,6 +1273,7 @@ def main() -> None:
 
     result = build_all(workdir, args.software_name, args.version, args.skip_preview)
     print(f"OK final materials: {workdir / '正式资料'}")
+    print("声明：本材料仅用于降低补正风险，不保证登记机关最终结论。")
     for output in result["outputs"]:
         print(output)
     if result["warnings"]:

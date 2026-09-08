@@ -283,6 +283,17 @@ class ProfileAndSwitchTest(unittest.TestCase):
                                 "verification": "needs_review",
                             }
                         ],
+                        "visual_evidence": [
+                            {
+                                "evidence_id": "V-001",
+                                "feature_id": "F-001",
+                                "kind": "ui_screenshot",
+                                "capture_source": "live_system",
+                                "data_state": "populated",
+                                "grade": "B",
+                                "acquisition_status": "acquired",
+                            }
+                        ],
                         "fact_assertions": [],
                     },
                     ensure_ascii=False,

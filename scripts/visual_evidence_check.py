@@ -377,6 +377,13 @@ def main() -> None:
             print(f"  ERROR: {e}")
         for w in report.get("warnings", []):
             print(f"  WARNING: {w}")
+        # v1.5：视觉检查能力三层诚实分层（L1 机器验证 / L2 用户声明 / L3 辅助信号）
+        print("")
+        print("【视觉证据等级说明】检查能力三层分层：")
+        print("  L1 机器验证（确定性）：文件存在性、pHash/dHash 重复检测、空状态文本、脱敏正则、DOCX 嵌入完整性")
+        print("  L2 用户声明（未经验证）：capture_source（真实运行/设计稿）、数据真实性、A/B 级等级判定——由申报方声明，本系统无法自动区分真实截图与设计稿")
+        print("  L3 辅助信号（不阻断）：OCR 语义计数仅用于人工复核提示，不作精确计数校验")
+        print("  若申报不实，材料风险由申报方承担。")
 
     sys.exit(1 if report.get("errors") else 0)
 

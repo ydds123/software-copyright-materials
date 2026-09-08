@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.0",
+  "reviewed_at": "2026-09-01",
+  "capabilities": {
+    "file_write": {
+      "decision": "approved",
+      "reviewer": "Fokkyp",
+      "scope": "仅限任务目录内生成物：analysis/、草稿/、正式资料/、截图/ 及任务登记与门禁状态；覆盖已存在文件必须走 safe_write.py 或 Edit。",
+      "reason": "材料生成流程必然写入任务目录（Markdown 草稿、代码材料、DOCX、门禁记录）；写入范围由工作流约束在任务目录内，不触碰源码仓库。",
+      "expires_at": "2027-09-01",
+      "evidence": [
+        "scripts/safe_write.py",
+        "references/skill-full-spec.md"
+      ],
+      "target_enforcement": {
+        "openai": "metadata-adapter",
+        "generic": "metadata-adapter",
+        "claude": "native",
+        "vscode": "metadata-adapter"
+      }
+    },
+    "subprocess": {
+      "decision": "approved",
+      "reviewer": "Fokkyp",
+      "scope": "本地确定性校验与生成：content_quality_check、evidence_plan_check、飞书/白板 CLI 调用、DOCX 预览脚本。",
+      "reason": "门禁校验（content-quality/material-plan）与 DOCX 预览需要子进程调用；均通过脚本 CLI 表面执行，无交互式输入。",
+      "expires_at": "2027-09-01",
+      "evidence": [
+        "scripts/confirm_stage.py",
+        "scripts/build_docx_from_md.py"
+      ],
+      "target_enforcement": {
+        "openai": "metadata-adapter",
+        "generic": "metadata-adapter",
+        "claude": "native",
+        "vscode": "metadata-adapter"
+      }
+    }
+  }
+}

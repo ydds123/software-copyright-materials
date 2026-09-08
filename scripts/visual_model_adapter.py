@@ -14,6 +14,8 @@ Key guarantees:
 """
 
 from __future__ import annotations
+SCRIPT_INTERFACE = "internal-module"
+SCRIPT_INTERFACE_REASON = "visual evidence model adapter imported by visual_evidence_check; no CLI surface"
 
 import base64
 import hashlib

@@ -75,11 +75,28 @@ def check_application_consistency(plan: dict[str, Any], app_text: str) -> list[s
         errors.append(f"申请表中找不到软件名称 '{name}'")
     if version and version not in app_text:
         errors.append(f"申请表中找不到版本号 '{version}'")
+    # 功能名主干匹配：去掉常见描述修饰词（配置/编排/维护/跟踪/模块），
+    # 申请表自然语言描述（如「巡检点配置管理」）应对应计划功能「巡检点管理」
+    import re as _re
+    def _compact(s: str) -> str:
+        return s.replace(' ', '').replace('\u3000', '')
+    app_c = _compact(app_text)
     for f in plan_features(plan):
         if f.get("importance") == "core":
             fname = str(f.get("name") or "").strip()
-            if fname and fname not in app_text:
-                errors.append(f"申请表主要功能描述中找不到核心功能 '{fname}'")
+            if not fname:
+                continue
+            fname_c = _compact(fname)
+            if fname_c in app_c:
+                continue
+            stem = fname
+            for mod in ('配置管理', '编排与管理', '维护管理', '跟踪管理', '管理'):
+                if stem.endswith(mod):
+                    stem = stem[:-len(mod)]
+                    break
+            stem_c = _compact(stem)
+            if stem_c and stem_c not in app_c:
+                errors.append(f"申请表主要功能描述中找不到核心功能 '{fname}'（主干 '{stem}' 也未出现）")
     return errors
 
 

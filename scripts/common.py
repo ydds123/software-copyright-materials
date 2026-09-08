@@ -147,6 +147,7 @@ SUPPLEMENT_CODE_EXTS = {
     ".sql",
     ".sh",
     ".json",
+    ".xml",
 }
 
 COPYRIGHT_CODE_EXTS = FRONTEND_EXTS | SUPPLEMENT_CODE_EXTS

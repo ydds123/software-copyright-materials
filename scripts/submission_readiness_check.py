@@ -110,14 +110,25 @@ def run(
         if code != 0:
             errors.append(f"logic_consistency_check 未通过（exit {code}）")
 
-    # 4. batch structure (only if multiple docs given)
+    # 4. batch structure（方案 v2 决策④：确定性硬门禁阻断；相似度高风险仅告警人工复核）
     if batch_manuals and len(batch_manuals) >= 2:
         code, out = _run_checker(
-            [str(scripts / "batch_structure_check.py"), "--manuals", *[str(m) for m in batch_manuals]]
+            [str(scripts / "batch_structure_check.py"), "--manuals", *[str(m) for m in batch_manuals], "--json"]
         )
         checks["batch-structure"] = {"exit": code, "output": out[:500]}
         if code != 0:
             errors.append(f"batch_structure_check 未通过（exit {code}）")
+        try:
+            batch_json = json.loads(out)
+            high_risks = [r for r in batch_json.get("risks") or [] if r.get("level") == "high"]
+            if high_risks:
+                for r in high_risks[:5]:
+                    warnings.append(
+                        f"[高风险-需人工复核] {' 与 '.join(r.get('pair') or [])}: {r.get('detail','')}"
+                    )
+                warnings.append(f"batch_structure 高风险共 {len(high_risks)} 项，提交前需人工复核确认可辩护")
+        except (json.JSONDecodeError, AttributeError):
+            pass
 
     # 4b. cross-material consistency (plan §6.1 gate 8)
     if plan_path.exists() and switches.get("cross-material", "on") != "off":
@@ -153,8 +164,16 @@ def run(
         if code != 0:
             errors.append(f"final_artifact_check 未通过（exit {code}）")
 
-    # 5. required gates confirmed
+    # 5. required gates confirmed（v2 路径：材料证据计划替代 code-selection）
+    v2 = False
+    if plan_path.exists():
+        try:
+            v2 = read_json(plan_path).get("schema_version") == 3
+        except Exception:
+            pass
     required = ["manual", "content-quality", "code-selection", "markdown"]
+    if v2:
+        required = [("material-plan" if g == "code-selection" else g) for g in required]
     missing = [g for g in required if not gates.get(g, {}).get("confirmed")]
     if missing:
         errors.append(f"必备门禁未确认：{', '.join(missing)}")
@@ -186,6 +205,7 @@ def main() -> None:
         final_artifact=Path(args.final_artifact) if args.final_artifact else None,
     )
     if args.json:
+        report["disclaimer"] = "本材料仅用于降低补正风险，不保证登记机关最终结论。"
         print(json.dumps(report, ensure_ascii=False, indent=2))
     else:
         print(f"SUBMISSION {report['status'].upper()}")
@@ -193,6 +213,7 @@ def main() -> None:
             print(f"  ERROR: {e}")
         for w in report["warnings"]:
             print(f"  WARNING: {w}")
+        print("声明：本材料仅用于降低补正风险，不保证登记机关最终结论。")
     if report["status"] == "invalid":
         sys.exit(2)
     sys.exit(1 if report["errors"] else 0)

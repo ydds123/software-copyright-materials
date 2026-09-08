@@ -2,6 +2,8 @@
 """Business model normalization for operation manual generation."""
 
 from __future__ import annotations
+SCRIPT_INTERFACE = "internal-module"
+SCRIPT_INTERFACE_REASON = "manual data model imported by manual audit/quality helpers; no CLI surface"
 
 import re
 from typing import Any
@@ -288,9 +290,18 @@ def normalize_manual_modules(
         )
         if not actors:
             actors = ["相关业务用户"]
-        screenshot_note = plain_manual_text(str(item.get("screenshot") or "")).strip()
-        if not screenshot_note:
-            screenshot_note = f"{_ZH["zh066"]}{title}{_ZH["zh067"]}"
+        # 截图：支持单字段 screenshot（兼容），也支持 screenshots 列表（列表截图 + 表单截图，台账型模块至少两处，分别紧跟列表/表单描述）
+        screenshots_list = item.get("screenshots")
+        if isinstance(screenshots_list, list) and screenshots_list:
+            shots = [
+                str(s.get("text") or s.get("position") or "").strip()
+                for s in screenshots_list
+                if isinstance(s, dict) and str(s.get("text") or "").strip()
+            ]
+            screenshot_notes = shots or [f"{title}页面"]
+        else:
+            screenshot_note = plain_manual_text(str(item.get("screenshot") or "")).strip()
+            screenshot_notes = [screenshot_note] if screenshot_note else [f"{title}页面"]
         modules.append(
             {
                 "feature": title,
@@ -315,7 +326,9 @@ def normalize_manual_modules(
                 "role_chain": plain_manual_text(str(item.get("role_chain") or "")),
                 "upstream_dependency": plain_manual_text(str(item.get("upstream_dependency") or "")),
                 "downstream_impact": plain_manual_text(str(item.get("downstream_impact") or "")),
-                "screenshot": f"{_ZH["zh068"]}{screenshot_note.strip('。')}。】",
+                "screenshots": [
+                    f"{_ZH["zh068"]}{note.strip('。')}。】" for note in screenshot_notes
+                ],
             }
         )
     return modules

@@ -6,6 +6,8 @@ real correction feedback (补正报告) and dry-run findings.
 """
 
 from __future__ import annotations
+SCRIPT_INTERFACE = "internal-module"
+SCRIPT_INTERFACE_REASON = "shared helpers for propose_evidence_plan/evidence_plan_check; no CLI surface"
 
 import re
 from pathlib import Path

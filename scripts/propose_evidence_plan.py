@@ -56,6 +56,9 @@ def collect_code_candidates(roots: list[dict[str, str]]) -> list[dict[str, Any]]
         for path in iter_project_files(root_path, COPYRIGHT_CODE_EXTS):
             if is_known_config_file(path):
                 continue
+            # v1.6 XML 白名单：仅 mapper 目录下的 XML（复杂动态 SQL 属强证据）；其余 XML 配置不入候选
+            if path.suffix.lower() == '.xml' and '/mapper/' not in path.as_posix() and '\\mapper\\' not in str(path):
+                continue
             rel_path = rel(path, root_path)
             key = (root["root_id"], rel_path)
             if key in seen:
@@ -320,6 +323,38 @@ def main() -> None:
         batch_id=args.batch_id,
         team_members=args.team_members,
     )
+
+    # ── v1.6 候选池预筛（M2：只排序分层、不删除；摘要存储减体积）──
+    grade_order = {'A': 0, 'B': 1, 'C': 2, 'D': 3}
+
+    def gsort(c):
+        return (grade_order.get(c.get('grade_hint'), 4), c.get('line_count', 0))
+
+    feature_ev_ids: set[str] = set()
+    for f in plan.get('features', []):
+        feature_ev_ids.update(str(x) for x in (f.get('code_evidence') or []))
+    module_cands = [c for c in plan['code_evidence'] if c['evidence_id'] in feature_ev_ids]
+    module_cands.sort(key=gsort)
+    ab_rest = [c for c in plan['code_evidence']
+               if c['evidence_id'] not in feature_ev_ids and c.get('grade_hint') in ('A', 'B')]
+    ab_rest.sort(key=gsort)
+    top_module = module_cands[:8 * max(1, len(plan.get('features', [])))]
+    top_supplement = ab_rest[:100]
+    detail_ids: set[str] = {c['evidence_id'] for c in top_module} | {c['evidence_id'] for c in top_supplement}
+    plan['module_candidates'] = top_module
+    plan['supplement_candidates'] = top_supplement
+    detail_out: dict[str, dict] = {}
+    kept: list[dict] = []
+    for c in plan['code_evidence']:
+        if c['evidence_id'] in detail_ids or c.get('selected'):
+            kept.append(c)
+            continue
+        detail_out[c['evidence_id']] = c
+    plan['code_evidence'] = kept
+    plan['candidate_detail_file'] = '候选全量明细.json'
+    plan['candidate_detail_note'] = '全量候选（未选中）存于候选全量明细.json，可检索全字段；如需在模块候选之外加选，从该文件回填条目。'
+    write_json(out_dir / '候选全量明细.json', {'schema_version': SCHEMA_VERSION, 'candidates': detail_out})
+
     write_json(out_dir / PLAN_FILE, plan)
     write_plan_md(out_dir / PLAN_MD_FILE, plan)
 

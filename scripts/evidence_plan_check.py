@@ -48,7 +48,7 @@ def resolve_root_path(plan: dict[str, Any], root_id: str) -> Path | None:
     return None
 
 
-def check_plan(plan_path: Path) -> tuple[list[str], list[str], dict[str, Any]]:
+def check_plan(plan_path: Path, block_d_grade: bool = False) -> tuple[list[str], list[str], dict[str, Any]]:
     """Return (errors, warnings, report)."""
     errors: list[str] = []
     warnings: list[str] = []
@@ -62,6 +62,13 @@ def check_plan(plan_path: Path) -> tuple[list[str], list[str], dict[str, Any]]:
 
     features = plan.get("features") or []
     evidence = plan.get("code_evidence") or []
+    # v1.6 候选预筛：候选池 = 计划内条目 + 外置全量明细（只排序不删除，全量可及）
+    detail_file = plan_path.parent / str(plan.get("candidate_detail_file") or "候选全量明细.json")
+    if detail_file.exists():
+        detail = read_json(detail_file)
+        for _c in (detail.get("candidates") or {}).values():
+            if isinstance(_c, dict):
+                evidence.append(_c)
     ev_by_id = {e.get("evidence_id"): e for e in evidence if isinstance(e, dict)}
     selected = [e for e in evidence if isinstance(e, dict) and e.get("selected")]
 
@@ -114,12 +121,30 @@ def check_plan(plan_path: Path) -> tuple[list[str], list[str], dict[str, Any]]:
         if sha256_of(fpath) != e.get("sha256"):
             errors.append(f"R5: 文件哈希与计划不一致（文件已被修改）: {e.get('path')}")
 
-    # W1: D ratio among selected
+        # R6: 开源协议声明检测（2026 新政 AI 代码规避：含开源协议标记而未经合规处理 → warning）
+        if fpath.suffix.lower() in ('.java', '.kt', '.vue', '.ts', '.js', '.py'):
+            try:
+                head = fpath.read_text(encoding='utf-8', errors='replace')[:6000]
+            except OSError:
+                head = ''
+            for lic in ('MIT License', 'Apache License', 'GNU GENERAL PUBLIC', 'GPL', 'BSD License'):
+                if lic in head:
+                    warnings.append(
+                        f"W-004: 选中文件含开源协议声明（{lic}）: {e.get('path')}——"
+                        "2026 新政要求确认商业使用合规改造痕迹，无改造标注的文件不建议入材料"
+                    )
+                    break
+
+    # W1: D ratio among selected（v1.6：可配置硬阻断，默认警告）
     if selected:
         d_count = sum(1 for e in selected if e.get("grade") == "D")
         ratio = d_count / len(selected)
         if ratio > 0.5:
-            warnings.append(f"W-001: D 级选中占比 {ratio:.0%}，超过 50% 建议上限")
+            msg = f"W-001: D 级选中占比 {ratio:.0%}，超过 50% 建议上限（纯模板代码不得成为材料主体）"
+            if block_d_grade:
+                errors.append(msg)
+            else:
+                warnings.append(msg)
 
     # W2: ai_tool authorship selected without resolution
     for e in selected:
@@ -157,6 +182,8 @@ def main() -> None:
     parser.add_argument("--out-dir", help="Draft output dir; auto-derived from --task-dir if omitted")
     parser.add_argument("--task-dir", help="Task root dir; auto-resolved from current directory if omitted")
     parser.add_argument("--json", action="store_true", help="Output structured JSON")
+    parser.add_argument("--block-d-grade", action="store_true",
+                        help="D 级占比 >50% 升级为硬阻断（switches.d-grade-block=on）")
     args = parser.parse_args()
 
     plan_path = Path(args.plan) if args.plan else None
@@ -174,7 +201,7 @@ def main() -> None:
         sys.exit(2)
 
     try:
-        errors, warnings, report = check_plan(plan_path)
+        errors, warnings, report = check_plan(plan_path, block_d_grade=args.block_d_grade)
     except Exception as exc:
         if args.json:
             print(json.dumps({"status": "invalid", "errors": [str(exc)]}, ensure_ascii=False))

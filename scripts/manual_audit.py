@@ -2,6 +2,8 @@
 """Unified planning and review artifacts for model-authored operation manuals."""
 
 from __future__ import annotations
+SCRIPT_INTERFACE = "internal-module"
+SCRIPT_INTERFACE_REASON = "manual self-review helpers imported by generate_manual_draft; no CLI surface"
 
 from pathlib import Path
 from typing import Any

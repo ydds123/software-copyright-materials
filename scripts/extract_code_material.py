@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 from typing import Any
 
@@ -133,6 +134,7 @@ def load_selected_files(project: Path, selection_path: Path | None) -> list[dict
                 raise SystemExit(f"计划中的输入根不存在: {root_id}")
             selected.append(
                 {
+                    "root_id": root_id,
                     "path": str(item.get("path", "")),
                     "selected": True,
                     "project": root,
@@ -191,8 +193,74 @@ def _sha256_of(path: Path) -> str:
     return h.hexdigest()
 
 
+def clean_dead_code(lines: list[str]) -> tuple[list[str], int]:
+    """v1.6 死代码清理（默认关）：移除注释掉的代码块与 console.log，不动业务逻辑。
+    返回 (清理后行列表, 移除行数)。"""
+    out: list[str] = []
+    removed = 0
+    in_block = False
+    for line in lines:
+        stripped = line.strip()
+        if in_block:
+            removed += 1
+            if '*/' in stripped:
+                in_block = False
+            continue
+        # 整行 /* ... */ 注释
+        if stripped.startswith('/*') and stripped.endswith('*/'):
+            removed += 1
+            continue
+        # 行中 /* 开始的块注释（可能跨行）
+        if stripped.startswith('/*'):
+            in_block = True
+            removed += 1
+            if '*/' in stripped:
+                in_block = False
+            continue
+        # 注释掉的代码行：// 开头且剩余内容含代码特征（非纯文字注释）
+        if stripped.startswith('//'):
+            body = stripped[2:].strip()
+            code_like = any(tok in body for tok in ('=', ';', '{', '}', '(', ')', '=>', 'return', 'const ', 'let ', 'var ', 'import '))
+            if code_like and not body.startswith(('File:', '[')):
+                removed += 1
+                continue
+        # console.log 调试语句（含跨行）
+        if re.match(r'^(console\.(log|debug|info)\s*\(|[a-zA-Z_$.]*console\.log\s*\()', stripped):
+            removed += 1
+            continue
+        out.append(line)
+    return out, removed
+
+
 def collect_code_lines(project: Path, selection_path: Path | None) -> tuple[list[str], list[dict[str, Any]]]:
     selected_items = load_selected_files(project, selection_path)
+    dead_code_clean = False
+
+    # ── v1.6 编排求解器接入（switches.layout-solver != off 时自动求解顺序）──
+    layout_report: dict[str, Any] | None = None
+    if selection_path is not None and Path(selection_path).exists():
+        sel_data = read_json(Path(selection_path))
+        if sel_data.get('schema_version') == 3:
+            gate_file = Path(selection_path).parent.parent / '门禁状态.json'
+            gates = read_json(gate_file) if gate_file.exists() else {}
+            if str(gates.get('switches', {}).get('layout-solver', 'on')) != 'off':
+                import layout_solver as _ls
+                _items = _ls.load_items(sel_data)
+                layout_report = _ls.solve(_items, sel_data)
+                if layout_report.get('gaps'):
+                    raise SystemExit(
+                        'STOP_FOR_USER\n'
+                        'NEXT_ACTION: 编排求解无解（每核心模块至少一个完整证据单元入前30/后30页）：\n'
+                        + '\n'.join(f'- {g}' for g in layout_report['gaps'])
+                        + ('\n建议：\n' + '\n'.join(f'- {s}' for s in layout_report.get('suggestions', [])) if layout_report.get('suggestions') else '')
+                    )
+                _order_map = {p: i for i, p in enumerate(layout_report.get('order', []))}
+                selected_items.sort(key=lambda it: _order_map.get(str(it.get('path', '')).replace('\\', '/'), 9999))
+                _gates_file = Path(selection_path).parent.parent / '门禁状态.json'
+                _gates = read_json(_gates_file) if _gates_file.exists() else {}
+                dead_code_clean = str(_gates.get('switches', {}).get('dead-code-clean', 'off')) == 'on'
+                # v1.8 文件标记与 page-annotations 同开关：off 时材料为纯源码，无 File/源行标注
+                file_marker_on = str(_gates.get('switches', {}).get('page-annotations', 'on')) != 'off'
     all_lines: list[str] = []
     manifest_files: list[dict[str, Any]] = []
 
@@ -221,45 +289,110 @@ def collect_code_lines(project: Path, selection_path: Path | None) -> tuple[list
         else:
             start_line, end_line = 1, len(source_lines)
             selected_lines = source_lines
+        # v1.6 死代码清理（默认关，开关 on 时材料为清理版）
+        cleaned = False
+        removed_n = 0
+        if dead_code_clean:
+            selected_lines, removed_n = clean_dead_code(selected_lines)
+            cleaned = True
         start = len(all_lines) + 1
-        marker = marker_for(path, item_project)
-        all_lines.append(marker)
+        if file_marker_on:
+            marker = marker_for(path, item_project)
+            all_lines.append(marker)
         all_lines.extend(selected_lines)
-        all_lines.append("")
         end = len(all_lines)
         manifest_files.append(
             {
+                "root_id": item.get("root_id", "primary"),
                 "path": rel(path, item_project),
                 "sha256": _sha256_of(path),
                 "source_line_count": len(source_lines),
                 "selected_line_start": start_line,
                 "selected_line_end": end_line,
                 "selected_line_count": len(selected_lines),
+                "cleaned": cleaned,
+                "removed_lines": removed_n,
                 "material_line_start": start,
                 "material_line_end": end,
             }
         )
-    return all_lines, manifest_files
+    return all_lines, manifest_files, layout_report
 
 
 def paginate(lines: list[str], lines_per_page: int) -> list[list[str]]:
     return [lines[i : i + lines_per_page] for i in range(0, len(lines), lines_per_page)]
 
 
-def write_pages_md(path: Path, title: str, software_name: str, version: str, pages: list[tuple[int, list[str]]]) -> None:
+def paginate_dense(lines: list[str], lines_per_page: int, max_total_per_page: int = 65) -> list[list[str]]:
+    """v1.8 纯代码分页：每页必须凑满 lines_per_page 行非空代码；
+    总行数（含空行）上限 max_total_per_page 仅防极端溢出（10.5pt×65行=682.5pt < A4 可用 728.5pt）。"""
+    pages: list[list[str]] = []
+    cur: list[str] = []
+    n = 0
+    total = 0
+    for l in lines:
+        cur.append(l)
+        total += 1
+        if l.strip():
+            n += 1
+        if n >= lines_per_page:
+            pages.append(cur)
+            cur = []
+            n = 0
+            total = 0
+        elif total >= max_total_per_page:
+            # 总行先到上限：把当前空行截到下一块，优先保证本块凑满 50 行代码
+            pages.append(cur)
+            cur = []
+            n = 0
+            total = 0
+    if cur:
+        pages.append(cur)
+    return pages
+
+
+def page_annotations(files: list[dict[str, Any]], total_lines: int, lines_per_page: int) -> dict[int, str]:
+    """v1.6 每页首行标注：// [文件路径 | 本页源行段 S-E | 文件总行 L]（注释形式，可回溯）。"""
+    ann: dict[int, str] = {}
+    page_count = (total_lines + lines_per_page - 1) // lines_per_page
+    for pno in range(1, page_count + 1):
+        start = (pno - 1) * lines_per_page + 1
+        end = min(pno * lines_per_page, total_lines)
+        hit = None
+        for f in files:
+            fs, fe = int(f['material_line_start']), int(f['material_line_end'])
+            if fs <= start <= fe:
+                hit = f
+                break
+        if hit is None:
+            ann[pno] = '// [跨文件页]'
+            continue
+        # 源行偏移：material 行首是 marker，源首行在 material_line_start+1
+        off = max(start - int(hit['material_line_start']) - 1, 0)
+        s_src = int(hit['selected_line_start']) + off
+        e_src = min(s_src + (end - start), int(hit['selected_line_end']))
+        ann[pno] = f"// [{hit['path']} | 源行 {s_src}-{e_src} | 总 {hit['source_line_count']}]"
+    return ann
+
+
+def write_pages_md(path: Path, title: str, software_name: str, version: str, pages: list[tuple[int, list[str]]], annotations: dict[int, str] | None = None) -> None:
     chunks = [f"# {title}", "", f"软件名称：{software_name}", f"版本号：{version}", ""]
     for page_no, page_lines in pages:
         chunks.extend([f"## 第 {page_no} 页", "", "```text"])
+        if annotations and annotations.get(page_no):
+            chunks.append(annotations[page_no])
         chunks.extend(page_lines)
         chunks.extend(["```", ""])
     path.write_text("\n".join(chunks), encoding="utf-8")
 
 
-def write_pages_md_append(path: Path, title: str, software_name: str, version: str, pages: list[tuple[int, list[str]]]) -> None:
+def write_pages_md_append(path: Path, title: str, software_name: str, version: str, pages: list[tuple[int, list[str]]], annotations: dict[int, str] | None = None) -> None:
     """Append back-page material to an existing MD file (no duplicate header)."""
     chunks = [f"# {title}", f"软件名称：{software_name}", f"版本号：{version}", ""]
     for page_no, page_lines in pages:
         chunks.extend([f"## 第 {page_no} 页", "", "```text"])
+        if annotations and annotations.get(page_no):
+            chunks.append(annotations[page_no])
         chunks.extend(page_lines)
         chunks.extend(["```", ""])
     with open(path, "a", encoding="utf-8") as f:
@@ -299,7 +432,7 @@ def write_manifest_md(path: Path, manifest: dict[str, Any]) -> None:
 
 def extract(project: Path, out_dir: Path, software_name: str, version: str, lines_per_page: int, selection_path: Path | None) -> dict[str, Any]:
     ensure_dir(out_dir)
-    code_lines, files = collect_code_lines(project, selection_path)
+    code_lines, files, layout_report = collect_code_lines(project, selection_path)
     if not code_lines:
         raise SystemExit("No selected frontend source code files found for extraction.")
 
@@ -315,17 +448,51 @@ def extract(project: Path, out_dir: Path, software_name: str, version: str, line
     outputs: list[str] = []
 
     if total_pages >= SPLIT_THRESHOLD_PAGES:
-        front = list(enumerate(pages[:30], start=1))
-        back_start = total_pages - 29
-        back = [(back_start + i, page) for i, page in enumerate(pages[-30:])]
+        # v1.8 前后端分池 + 纯代码分页：前 30 页=前端完整文件（非空代码 50 行/页），后 30 页=后端完整文件；
+        # 纯前端选材时后 30 页 = 材料末尾 30 页（尾部）
+        front_files = [f for f in files if f.get("root_id") in ("primary", "web", "screen")]
+        back_files = [f for f in files if f.get("root_id") == "backend"]
+
+        def lines_of(flist):
+            out: list[str] = []
+            for f in flist:
+                out.extend(code_lines[int(f["material_line_start"]) - 1 : int(f["material_line_end"])])
+            return out
+
+        front_pages = paginate_dense(lines_of(front_files), lines_per_page)
+        if back_files:
+            back_pages = paginate_dense(lines_of(back_files), lines_per_page)[:30]
+            front_pages = front_pages[:30]
+        else:
+            # 纯前端：前 30 页 + 末尾 30 页；末尾不足每页行数的残页舍弃，保证每页满行
+            full_pages = front_pages if len(front_pages[-1]) == lines_per_page else front_pages[:-1]
+            back_pages = full_pages[-30:] if len(full_pages) > 30 else []
+            front_pages = full_pages[:30]
+        front = list(enumerate(front_pages[:30], start=1))
+        back = list(enumerate(back_pages[:30], start=31))
         combined_path = out_dir / "代码-前后30页.md"
-        write_pages_md(combined_path, "代码材料（前30页）", software_name, version, front)
+        # v1.6 页首行段标注（switches.page-annotations != off）
+        annotations = None
+        if selection_path is not None and Path(selection_path).exists():
+            _gf = Path(selection_path).parent.parent / '门禁状态.json'
+            _g = read_json(_gf) if _gf.exists() else {}
+            if str(_g.get('switches', {}).get('page-annotations', 'on')) != 'off':
+                annotations = page_annotations(files, len(code_lines), lines_per_page)
+        write_pages_md(combined_path, "代码材料（前30页）", software_name, version, front, annotations)
         # Append back 30 pages to same file
         with open(combined_path, "a", encoding="utf-8") as f:
             f.write("\n")
-        write_pages_md_append(combined_path, "代码材料（后30页）", software_name, version, back)
+        write_pages_md_append(combined_path, "代码材料（后30页）", software_name, version, back, annotations)
         outputs.append(combined_path.name)
         mode = "front30_back30"
+        # v1.8 后置拦截：材料实际页数必须 ≥60，不足则停止要求补选（防 59 页漏网）
+        _material_pages = len(front) + len(back)
+        if _material_pages < SPLIT_THRESHOLD_PAGES:
+            raise SystemExit(
+                "STOP_FOR_USER\n"
+                f"NEXT_ACTION: 代码材料实际仅 {_material_pages} 页（前 {len(front)} + 后 {len(back)}），不足 60 页。"
+                "请在 材料证据计划.json 中补选代码文件（或放宽 layout_solver 容量）后重新抽取。"
+            )
     else:
         all_path = out_dir / "代码-全部.md"
         all_pages = list(enumerate(pages, start=1))
@@ -358,6 +525,8 @@ def extract(project: Path, out_dir: Path, software_name: str, version: str, line
         "files": files,
         "safe_software_filename": safe_filename(software_name),
     }
+    if layout_report:
+        manifest["order_solution"] = layout_report
     write_json(out_dir / "代码提取清单.json", manifest)
     write_manifest_md(out_dir / "代码提取清单.md", manifest)
     return manifest

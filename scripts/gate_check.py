@@ -52,10 +52,26 @@ def main() -> None:
     except Exception:
         state = {}
 
+    # v2 路径：存在材料证据计划（schema_version=3）时，code-selection 门禁由 material-plan 替代
+    v2_plan = wd / "草稿" / "材料证据计划.json"
+    is_v2 = False
+    if v2_plan.exists():
+        try:
+            with open(v2_plan, "r", encoding="utf-8") as f:
+                is_v2 = json.load(f).get("schema_version") == 3
+        except Exception:
+            pass
+
     prerequisites = GATE_CHAIN.get(args.before)
     if prerequisites is None:
         print(f"GATE UNKNOWN: step '{args.before}' is not in GATE_CHAIN. Allowed: {list(GATE_CHAIN)}")
         sys.exit(2)
+
+    if is_v2 and "code-selection" in prerequisites:
+        prerequisites = [("material-plan" if g == "code-selection" else g) for g in prerequisites]
+    # extract-code/application-info 的 v1 前置 code-selection 在 v2 下同样由 material-plan 承担
+    if is_v2 and args.before in ("extract-code", "application-info") and "code-selection" in prerequisites:
+        prerequisites = ["material-plan" if g == "code-selection" else g for g in prerequisites]
 
     missing = []
     for gate_name in prerequisites:

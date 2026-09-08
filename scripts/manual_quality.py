@@ -2,12 +2,88 @@
 """Quality gates for operation manual Markdown drafts."""
 
 from __future__ import annotations
+SCRIPT_INTERFACE = "internal-module"
+SCRIPT_INTERFACE_REASON = "manual quality rules imported by content_quality_check; no CLI surface"
 
+import importlib.util
 import re
 from pathlib import Path
 from typing import Any
 
 from common import read_json
+
+# ── v1.6 说人话检查：复用 human-writing skill 的 check_prose 规则（不复制规则表）──
+_HW_CHECK_PROSE = Path(r"C:\Users\rd001\.agents\skills\human-writing\scripts\check_prose.py")
+_hw_cp = None
+
+
+def _load_human_checker():
+    global _hw_cp
+    if _hw_cp is not None:
+        return _hw_cp
+    if not _HW_CHECK_PROSE.exists():
+        _hw_cp = False
+        return _hw_cp
+    spec = importlib.util.spec_from_file_location("check_prose", _HW_CHECK_PROSE)
+    module = importlib.util.module_from_spec(spec)
+    sys_modules = importlib.sys.modules
+    sys_modules["check_prose"] = module  # dataclass 需要模块注册在 sys.modules
+    spec.loader.exec_module(module)
+    _hw_cp = module
+    return _hw_cp
+
+
+def human_writing_hard_issues(text: str) -> list[str]:
+    """Hard-stop style violations from human-writing check_prose (软著场景适配):
+    - 翻案句（不是……而是 等）、硬停词、商业黑话、模型路标 → error
+    - 冒号/破折号不在此查（技术文档合法；破折号另有密度检查）
+    - 语境词/借喻/抒情词不接（软著业务语境不同）
+    """
+    module = _load_human_checker()
+    if not module:
+        return []
+    prose = module.mask_non_prose(text)
+    issues: list[str] = []
+    for _, phrase in module.non_overlapping_terms(prose, module.HARD_STOPS):
+        issues.append(f"机械腔硬停词「{phrase}」")
+    for _, phrase in module.non_overlapping_terms(prose, module.HARD_JARGON):
+        issues.append(f"商业黑话「{phrase}」")
+    for match in module.all_matches(prose, module.ROAD_SIGN_PATTERNS):
+        issues.append(f"模型路标「{match.group().strip(module.ROAD_STRIP_CHARS)[:24]}」")
+    for match in module.all_matches(prose, module.PIVOT_PATTERNS):
+        issues.append(f"翻案句「{module.excerpt(match.group(), 36)}」")
+    occupied = [m.span() for m in module.all_matches(prose, module.PIVOT_PATTERNS)]
+    for match in module.all_matches(prose, module.SEMANTIC_PIVOT_PATTERNS):
+        if any(match.start() < end and match.end() > start for start, end in occupied):
+            continue
+        issues.append(f"翻案腔变形「{module.excerpt(match.group(), 30)}」")
+    return issues
+
+
+def human_writing_soft_notes(text: str) -> list[str]:
+    """Soft shape warnings from human-writing check_prose (提示用，不阻断)。
+
+    软著场景适配：同构排比检查下线（技术文档的名词/参数枚举如
+    「设备管理、巡检点管理、隐患治理」「是否立即推送、是否自定义周期」
+    是结构性列举，散文式排比规则误报率高）。
+    """
+    module = _load_human_checker()
+    if not module:
+        return []
+    prose = module.mask_non_prose(text)
+    notes: list[str] = []
+    for match in module.all_matches(prose, module.NOMINALIZATION_PATTERNS)[:3]:
+        notes.append(f"名词化句式「{module.excerpt(match.group(), 30)}」")
+    cv = module.sentence_length_cv(prose)
+    if cv and cv[0] < 0.42:
+        notes.append(f"句长过于均匀（变异系数 {cv[0]:.2f}），长短句差距小")
+    paragraphs = module.prose_paragraphs(prose)
+    if len(paragraphs) >= 10:
+        counts, _ = module.opener_counts(paragraphs)
+        repeated = [f"{o} {n} 次" for o, n in counts.items() if n >= 4]
+        if repeated:
+            notes.append("段落开场重复：" + "、".join(repeated))
+    return notes
 
 _ZH = {
     "zh014": "模板符合度不足：正文字符数 ",
@@ -206,6 +282,13 @@ def manual_section_body(text: str, title: str) -> str:
         flags=re.M,
     )
     matches = list(pattern.finditer(text))
+    if not matches:
+        # v1.6 包含匹配 fallback：hybrid/design 标题常带描述性前后缀（如「巡检任务管理与异常上报管理」）
+        contains = re.compile(
+            rf"^(#{{2,4}})\s+[^\n]*{re.escape(title)}[^\n]*\s*$",
+            flags=re.M,
+        )
+        matches = list(contains.finditer(text))
     if not matches:
         return ""
     # Prefer the highest-level matching section. A module name may also appear
@@ -513,15 +596,26 @@ def manual_quality_issues(
     modules: list[dict[str, Any]],
     profile: dict[str, Any] | None = None,
     business: dict[str, Any] | None = None,
+    document_type: str = "",
 ) -> list[str]:
     issues: list[str] = []
-    required_section_aliases = [
-        ("系统概述", ["系统概述"]),
-        ("登录", ["系统登录", "登录界面", "Web 管理端登录"]),
-        ("系统要求", ["系统要求", "运行与使用要求"]),
-        ("常见问题解答", ["常见问题解答"]),
-        ("术语表", ["术语表", "术语说明"]),
-    ]
+    # v1.6 按文档类型选章节别名（hybrid/design 骨架与 user_manual 不同）
+    if document_type in ("design_description", "hybrid"):
+        required_section_aliases = [
+            ("总体设计", ["总体设计", "系统概述"]),
+            ("核心业务机制", ["核心业务机制设计", "核心算法", "核心机制"]),
+            ("功能操作", ["功能操作", "按角色的功能操作", "功能详解", "界面说明"]),
+            ("故障排查", ["故障排查", "常见问题解答", "常见场景"]),
+            ("术语表", ["术语表", "术语说明"]),
+        ]
+    else:
+        required_section_aliases = [
+            ("系统概述", ["系统概述"]),
+            ("登录", ["系统登录", "登录界面", "Web 管理端登录"]),
+            ("系统要求", ["系统要求", "运行与使用要求"]),
+            ("常见问题解答", ["常见问题解答"]),
+            ("术语表", ["术语表", "术语说明"]),
+        ]
     for label, aliases in required_section_aliases:
         if not any(manual_section_body(text, title) for title in aliases):
             issues.append(f"{_ZH['zh037']}{label}")
@@ -530,6 +624,21 @@ def manual_quality_issues(
     if re.search(r"^##\s+[一二三四五六七八九十百]+、", text, flags=re.M):
         issues.append("章节标题仍使用中文大写序号，应改为阿拉伯数字层级编号（如 1 系统简介）")
     issues.extend(major_heading_number_issues(text))
+    # v1.6 风格规则：破折号密度与重复小节（模板化/机械感信号）
+    body_text = re.sub(r"```.*?```", "", text, flags=re.S)
+    han_chars = len(re.findall(r"[\u4e00-\u9fff]", body_text))
+    dash_count = body_text.count("——")
+    if han_chars >= 500 and dash_count / (han_chars / 1000) > 15:
+        issues.append(f"破折号密度过高：正文每千字 {dash_count / (han_chars / 1000):.0f} 处“——”（建议 ≤15）。改为逗号/分号/句号自然分隔。")
+    from collections import Counter
+    headings = []
+    for l in text.splitlines():
+        m = re.match(r"^#{1,6}\s+(.+?)\s*$", l)
+        if m:
+            headings.append(re.sub(r"^\d+(?:\.\d+)*[、.\s]*", "", m.group(1).strip()))
+    for title, n in Counter(headings).items():
+        if n >= 3 and title:
+            issues.append(f"重复小节「{title}」出现 {n} 次：过度对称是模板化特征，保留最有价值的 1-2 处，其余改为正文段落或合并到附录。")
     for term in TECHNICAL_TERMS:
         if term in text:
             issues.append(f"{_ZH["zh038"]}{term}")
@@ -539,6 +648,7 @@ def manual_quality_issues(
     for marker in AI_TONE_MARKERS:
         if marker in text:
             issues.append(f"{_ZH["zh040"]}{marker}")
+    issues.extend(human_writing_hard_issues(text))
     screenshot_count = text.count("【截图预留：") + len(re.findall(r"!\[[^\]]*\]\(截图/[^)]+\)", text))
     if screenshot_count < len(modules):
         issues.append("真实截图和截图预留总数少于核心模块数量")
@@ -564,8 +674,225 @@ def manual_quality_issues(
                 issues.append(f"{_ZH["zh044"]}{title} / {label}")
     issues.extend(step_density_issues(text, modules))
     issues.extend(business_module_depth_issues(text, modules))
+    issues.extend(section_duplication_issues(text))
+    issues.extend(registry_depth_issues(text, modules))
+    issues.extend(list_before_detail_issues(text, modules))
+    if business:
+        issues.extend(operation_path_issues(text, business))
+        issues.extend(role_path_issues(text, business))
+    issues.extend(faq_count_issues(text))
+    issues.extend(test_data_evidence_issues(text))
     issues.extend(template_profile_quality_issues(text, modules, profile))
     issues.extend(content_review_quality_issues(text, modules, profile, business))
+    return issues
+
+
+def _chapter_bodies(text: str) -> list[tuple[str, str]]:
+    """按 ###/#### 标题切分正文，返回 (父级+标题, body) 列表。同标题小节用父级区分。"""
+    import re as _re
+    lines = text.splitlines()
+    heads = [(i, l.strip(), len(l) - len(l.lstrip('#'))) for i, l in enumerate(lines)
+             if _re.match(r'^#{3,4}\s+', l)]
+    out = []
+    for k, (i, h, lv) in enumerate(heads):
+        end = heads[k + 1][0] if k + 1 < len(heads) else len(lines)
+        parent = ''
+        for j in range(k - 1, -1, -1):
+            if heads[j][2] < lv:
+                parent = heads[j][1]
+                break
+        label = f'{parent[4:]}/{h[4:]}' if parent else h[4:]
+        out.append((label, '\n'.join(lines[i + 1:end])))
+    return out
+
+
+def _paragraph_hashes(body: str, min_len: int = 30) -> set[str]:
+    import hashlib
+    import re as _re
+    out = set()
+    for para in body.split('\n\n'):
+        t = ' '.join(para.split())
+        if len(t) >= min_len and not t.startswith('#') and not t.startswith('```'):
+            out.add(hashlib.sha1(t.encode('utf-8')).hexdigest()[:12])
+    return out
+
+
+# 标准表头（每个台账/业务模块都会用到的固定格式），跨章节重复不计入职责互斥判定
+STANDARD_TABLE_HEADERS = {
+    ("异常情况", "处理逻辑"),
+    ("字段名称", "字段类型", "是否必填", "业务规则"),
+    ("操作步骤", "用户操作", "系统响应", "异常处理"),
+    ("字段名称", "字段类型", "是否必填", "输入边界", "业务规则"),
+}
+
+
+def _table_row_hashes(body: str) -> set[str]:
+    import hashlib
+    import re as _re
+    out = set()
+    for l in body.splitlines():
+        m = _re.match(r'^\s*\|(.+)\|\s*$', l)
+        if not m:
+            continue
+        cells = [c.strip() for c in m.group(1).split('|')]
+        if all(c and set(c) <= {'-', ':'} for c in cells):
+            continue  # 分隔行
+        if not cells or not any(cells):
+            continue
+        if tuple(cells) in STANDARD_TABLE_HEADERS:
+            continue  # 标准表头，跨章节重复属正常格式
+        out.add(hashlib.sha1('|'.join(cells).encode('utf-8')).hexdigest()[:12])
+    return out
+
+
+def section_duplication_issues(text: str) -> list[str]:
+    """v1.7 Q-I05 落地：章节职责互斥——不同章节不得重复大段内容。
+
+    背景文档点名问题 3（6.6 节两个重复操作步骤表）的自动检测：
+    跨章节共享 ≥2 个相同段落，或 ≥3 个相同表格行 → error。
+    """
+    issues: list[str] = []
+    chapters = _chapter_bodies(text)
+    paras = {h: _paragraph_hashes(b) for h, b in chapters}
+    tables = {h: _table_row_hashes(b) for h, b in chapters}
+    for i in range(len(chapters)):
+        for j in range(i + 1, len(chapters)):
+            h1, h2 = chapters[i][0], chapters[j][0]
+            shared_p = paras[h1] & paras[h2]
+            shared_t = tables[h1] & tables[h2]
+            if len(shared_p) >= 2:
+                issues.append(f"章节职责互斥：「{h1[:26]}」与「{h2[:26]}」共享 {len(shared_p)} 个相同段落——同一信息只应在一个章节展开，其余处引用")
+            if len(shared_t) >= 3:
+                issues.append(f"章节职责互斥：「{h1[:26]}」与「{h2[:26]}」共享 {len(shared_t)} 个相同表格行——重复表格应删除或合并到统一附录")
+    return issues
+
+
+def operation_path_issues(text: str, business: dict[str, Any]) -> list[str]:
+    """v1.7 Q-T02 半自动落地：操作路径与模块端点一致性。
+
+    背景文档点名问题 4（6.7 路径写 App 入口但内容全是 Web）的自动检测：
+    - web 模块路径含 App/APP 指示 → error
+    - app 模块路径含菜单/Web 指示 → error
+    - 路径同时含两端指示（混合入口） → warning
+    """
+    import re as _re
+    issues: list[str] = []
+    endpoint_by_title = {}
+    for m in business.get('manual_modules', []):
+        title = str(m.get('title') or '').strip()
+        if title:
+            endpoint_by_title[title] = str(m.get('client_endpoint') or '')
+    for title, endpoint in endpoint_by_title.items():
+        body = manual_section_body(text, title)
+        if not body:
+            continue
+        for m in _re.finditer(r'操作路径[:：]([^\n]+)', body):
+            path = m.group(1).strip()
+            has_app = bool(_re.search(r'(App|APP|安卓)', path))
+            has_web = bool(_re.search(r'(菜单|Web|web)', path))
+            if endpoint == 'web' and has_app and not has_web:
+                issues.append(f"操作路径与端点不符：「{title}」是 Web 模块但路径写 App 入口（{path[:40]}）")
+            elif endpoint == 'app' and has_web and not has_app:
+                issues.append(f"操作路径与端点不符：「{title}」是 App 模块但路径写菜单/Web 入口（{path[:40]}）")
+            elif has_app and has_web:
+                issues.append(f"操作路径混合两端入口：「{title}」路径同时含 App 与 Web 指示（{path[:50]}），请确认本章描述与路径一致")
+    return issues
+
+
+def list_before_detail_issues(text: str, modules: list[dict[str, Any]]) -> list[str]:
+    """v1.8 「先列表后详情表单」：模块章节内列表描述必须在详情/表单描述之前。
+
+    描述顺序与真实操作顺序一致：进入模块先见列表，点击新增/查看详情才见表单。
+    判定：模块 body 中「列表」首次出现位置 早于 「详情/新增修改界面/表单/字段表」→ 合规；
+    详情表单侧先出现而列表后出现 → 顺序颠倒，报 issue。
+    """
+    import re as _re
+    issues: list[str] = []
+    list_kw = _re.compile(r'列表(?:页|界面|展示|展示字段|支持)')
+    detail_kw = _re.compile(r'(?:新增/修改界面|修改界面|详情页|查看详情|表单页|字段表|新增界面)')
+    for module in modules:
+        title = str(module.get("feature") or "").strip()
+        if not title:
+            continue
+        body = manual_section_body(text, title)
+        if not body:
+            continue
+        lm = list_kw.search(body)
+        dm = detail_kw.search(body)
+        if not (lm and dm):
+            continue  # 只有列表或只有详情/表单，无顺序问题
+        if dm.start() < lm.start():
+            issues.append(
+                f"「{title}」页面描述顺序颠倒：详情/表单描述出现在列表描述之前——"
+                "应按先列表后详情表单的顺序叙述（与真实操作顺序一致）"
+            )
+    return issues
+
+
+def registry_depth_issues(text: str, modules: list[dict[str, Any]]) -> list[str]:
+    """v1.7 manual_authoring_spec §6.1 落地：台账型模块必须说明
+    列表筛选项、真实异常和下游引用。缺项即报。"""
+    issues: list[str] = []
+    for module in modules:
+        title = str(module.get("feature") or "").strip()
+        if not title:
+            continue
+        if str(module.get("module_type") or "") != "registry":
+            continue
+        body = manual_section_body(text, title)
+        if not body:
+            continue
+        missing = []
+        if not any(k in body for k in ('筛选', '查询', '搜索', '按名称')):
+            missing.append('列表筛选条件')
+        if not any(k in body for k in ('提示', '阻止', '不允许', '不能', '校验')):
+            missing.append('真实异常处理')
+        if not any(k in body for k in ('引用', '关联', '下游')):
+            missing.append('下游引用影响')
+        if missing:
+            issues.append(f"台账型模块「{title}」缺少：{'、'.join(missing)}（§6.1 要求列表筛选项/真实异常/下游引用）")
+    return issues
+
+
+def role_path_issues(text: str, business: dict[str, Any]) -> list[str]:
+    """v1.7 Q-C03 落地：每个目标用户角色必须在功能操作章节有对应路径。
+
+    背景文档批评过"声明了部门负责人但所有操作都以安全管理员开头"。
+    检查范围：从「## 4」起的操作章节（排除引言/读者表）。
+    """
+    issues: list[str] = []
+    roles = [str(u.get('role') or '').strip() for u in business.get('target_users', [])]
+    if not roles:
+        return issues
+    op_text = text
+    import re as _re
+    m = _re.search(r'^## \d+\s+(?:按角色的功能操作|Web 管理端功能操作|功能操作)', text, _re.M)
+    if m:
+        op_text = text[m.start():]
+    for role in roles:
+        if role not in op_text:
+            issues.append(f"目标角色「{role}」在功能操作章节无任何操作路径——请为该角色补充操作章节或说明无操作")
+    return issues
+
+
+def faq_count_issues(text: str) -> list[str]:
+    """v1.7 manual_authoring_spec §9 下限：FAQ/故障排查至少 8 个真实问答。
+
+    只查下限，不奖励数量（§2 禁止篇幅激励）。
+    """
+    import re as _re
+    qa = len(_re.findall(r'^\*\*[^*]+\*\*\s*$', text, _re.M))
+    if qa < 8:
+        return [f"FAQ/故障排查仅 {qa} 个问答，少于 8 个下限（§9）；如真实问题不足 8 个请覆盖不同客户端与跨岗位协作场景"]
+    return []
+
+
+def test_data_evidence_issues(text: str) -> list[str]:
+    """v1.7 manual_authoring_spec §3 落地：测试/样例数据不能作为业务行为证据。"""
+    issues: list[str] = []
+    for kw in ('测试数据', '样例数据', '示例数据', '演示数据', '假数据', '模拟数据'):
+        if kw in text:
+            issues.append(f"正文出现「{kw}」——测试/样例数据不能作为正常业务行为证据，请改为真实业务场景描述")
     return issues
 
 

@@ -1,7 +1,8 @@
 {
   "_description": "操作手册质量门禁配置，供 content_quality_check.py 读取。修改门禁规则和禁止术语时只需改此文件。",
-  "_consumers": ["content_quality_check.py"],
-
+  "_consumers": [
+    "content_quality_check.py"
+  ],
   "gate_profiles": [
     {
       "gate": 1,
@@ -227,28 +228,119 @@
       "skill_ref": "manual_quality_spec Q-T01",
       "implemented": false,
       "reason": "gate 17 只检查模块级 evidence 文件路径—gap 内容需要模型执行读取和补写"
+    },
+    {
+      "gate": 23,
+      "name": "同批模板化结构检查",
+      "skill_ref": "manual_authoring_spec §2 硬性约束（同批次多份申请不得同构）",
+      "capability": "同批兄弟任务手册的标题重合率、表格结构指纹、重复段落与重复小节检查",
+      "limitation": "仅与同目录下兄弟任务的草稿/操作手册.md 对比；兄弟任务自身问题降级为警告不阻断",
+      "implemented": true
+    },
+    {
+      "gate": 24,
+      "name": "段落节奏观察",
+      "skill_ref": "防模板化指南 §2",
+      "capability": "统计超过 180 字的自然段数量，超限提示按语义边界拆分",
+      "limitation": "软提示不阻断；表格行、列表项、截图预留不计入",
+      "implemented": true
     }
   ],
-
   "forbidden_terms": [
-    ["\\bFlowable\\b", "工作流引擎名称", "error"],
-    ["\\bBPMN\\b(?!\\s*流程)", "BPMN（应写为'审批流程'）", "error"],
-    ["\\bSpring\\s+(Boot|Event|Cloud)", "Spring 框架名称", "error"],
-    ["\\bListener\\b", "事件监听器（应写为'处理'或'响应'）", "error"],
-    ["\\bCountDownLatch\\b", "Java 并发工具类名", "error"],
-    ["\\bRESTful\\b", "RESTful（应写为'接口调用'）", "error"],
-    ["\\bMySQL\\b", "数据库名（应写为'数据存储'）", "warn"],
-    ["\\bRedis\\b", "缓存组件名", "warn"],
-    ["\\bMapper\\b", "数据访问层名称", "warn"],
-    ["\\bService\\b", "服务层名称", "warn"],
-    ["\\bVue\\s*3\\b", "前端框架名", "warn"],
-    ["\\bTypeScript\\b", "编程语言名", "warn"],
-    ["\\bElement\\s*Plus\\b", "UI 组件库名", "warn"],
-    ["\\bController\\b", "控制器层名称", "warn"],
-    ["工作流引擎", "应写为'审批流程'", "error"],
-    ["流程定义键|process.*key", "应写为'审批流程配置'", "error"],
-    ["快照副本|DATA_TYPE_SNAPSHOT", "应写为'提交快照'", "error"],
-    ["Spring\\s*Event", "应写为'系统通知'或'自动触发'", "error"],
-    ["Event\\s*Listener", "应写为'处理'或'响应'", "error"]
+    [
+      "\\bFlowable\\b",
+      "工作流引擎名称",
+      "error"
+    ],
+    [
+      "\\bBPMN\\b(?!\\s*流程)",
+      "BPMN（应写为'审批流程'）",
+      "error"
+    ],
+    [
+      "\\bSpring\\s+(Boot|Event|Cloud)",
+      "Spring 框架名称",
+      "error"
+    ],
+    [
+      "\\bListener\\b",
+      "事件监听器（应写为'处理'或'响应'）",
+      "error"
+    ],
+    [
+      "\\bCountDownLatch\\b",
+      "Java 并发工具类名",
+      "error"
+    ],
+    [
+      "\\bRESTful\\b",
+      "RESTful（应写为'接口调用'）",
+      "error"
+    ],
+    [
+      "\\bMySQL\\b",
+      "数据库名（应写为'数据存储'）",
+      "warn"
+    ],
+    [
+      "\\bRedis\\b",
+      "缓存组件名",
+      "warn"
+    ],
+    [
+      "\\bMapper\\b",
+      "数据访问层名称",
+      "warn"
+    ],
+    [
+      "\\bService\\b",
+      "服务层名称",
+      "warn"
+    ],
+    [
+      "\\bVue\\s*3\\b",
+      "前端框架名",
+      "warn"
+    ],
+    [
+      "\\bTypeScript\\b",
+      "编程语言名",
+      "warn"
+    ],
+    [
+      "\\bElement\\s*Plus\\b",
+      "UI 组件库名",
+      "warn"
+    ],
+    [
+      "\\bController\\b",
+      "控制器层名称",
+      "warn"
+    ],
+    [
+      "工作流引擎",
+      "应写为'审批流程'",
+      "error"
+    ],
+    [
+      "流程定义键|process.*key",
+      "应写为'审批流程配置'",
+      "error"
+    ],
+    [
+      "快照副本|DATA_TYPE_SNAPSHOT",
+      "应写为'提交快照'",
+      "error"
+    ],
+    [
+      "Spring\\s*Event",
+      "应写为'系统通知'或'自动触发'",
+      "error"
+    ],
+    [
+      "Event\\s*Listener",
+      "应写为'处理'或'响应'",
+      "error"
+    ]
   ]
 }
