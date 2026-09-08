@@ -1,133 +1,168 @@
 # Software Copyright Materials
 
-用于根据真实软件项目生成中国软件著作权申请资料的 Codex Skill。
+根据真实软件项目生成中国软件著作权申请材料的 Codex / 通用 Agent Skill。
 
-该 Skill 会分析项目源码和业务证据，分阶段生成业务理解、操作手册、代码材料和申请表信息。在用户逐阶段确认后，输出可提交整理的正式资料。
+本 Skill 通过源码、页面、接口、配置和用户确认建立证据链，分阶段生成业务理解、操作手册、程序鉴别材料、申请表信息及正式 Word，并在提交前执行真实性、一致性、版式和批次风险检查。
 
-## 主要能力
+仓库地址：<https://github.com/ydds123/software-copyright-materials>
 
-- 分析项目技术栈、源码结构、页面、路由、接口和主要功能
-- 根据真实项目证据形成业务理解，避免套用通用模板
-- 引导补全软件全称、版本号、著作权人、软硬件环境等申请信息
-- 选择并提取能够体现软件功能和运行逻辑的真实源码
-- 生成面向普通用户的操作手册草稿
-- 生成申请表信息、程序鉴别材料 DOCX 和文档鉴别材料 DOCX
-- 对文件完整性、代码真实性、业务真实性和格式一致性进行验证
+## 核心能力
+
+- 分析单仓库或多仓库项目的技术栈、源码规模、页面、路由、接口和业务模块。
+- 基于真实代码证据形成业务理解、角色路径、操作闭环和术语标准。
+- 按 A/B/C/D 等级评估代码代表性，建立“功能 → 代码证据”映射。
+- 对选中源码记录 SHA-256、来源根、行段范围和署名风险，避免材料过期或边界混淆。
+- 按项目类型选择用户手册、设计说明书或混合型文档，不套用固定章节模板。
+- 生成前 30 页加后 30 页或全部源码形式的程序鉴别材料。
+- 生成申请表信息、程序鉴别材料 DOCX 和文档鉴别材料 DOCX。
+- 支持飞书画板技术图表，并以内容自适应 SVG 留存源文件，转换白底 PNG 供 Word 嵌入。
+- 支持业务截图清单、视觉证据覆盖、重复图片检查和人工复核提示。
+- 检查手册、申请表、代码清单、证据计划和最终 Word 的跨材料一致性。
+- 生成软件边界说明、整批结构风险报告和提交就绪结论。
+
+## 当前默认口径
+
+### 新任务默认使用 v2 证据计划
+
+新任务以 `草稿/材料证据计划.json`（`schema_version = 3`）作为选材层唯一真相来源。它支持：
+
+- 多源码根与聚合规模；
+- 核心功能及代码证据映射；
+- A/B/C/D 证据等级；
+- framework、ai_tool、team_member 署名风险三分法；
+- 文件 SHA-256 和可选 `line_range`；
+- 软件范围、事实断言、文档类型和视觉证据计划。
+
+`代码文件选择.json` / `code-selection` 仅用于兼容旧任务。新任务使用 `material-plan` 门禁；计划确认后若文件、哈希或范围变化，下游确认必须重新执行。
+
+### AI 声明由申请人决定
+
+Skill 不自动填写“未使用 AI”，也不代签 AI 开发限制声明。申请表只保留人工处理提示，由申请人在正式提交前根据真实情况决定和签署。
+
+### 参考素材采用 0+3
+
+- 主体法定字段从唯一主数据口径取得；
+- 技术与业务字段从当前项目代码、部署事实和用户确认取得；
+- 质量校准使用固定 rubric、人工认证样本和全批结构画像。
+
+全批画像只用于发现结构碰撞，不向新任务复制旧材料内容。主数据和认证样本是否读取由任务流程与用户授权决定，不宣称自动导入。
+
+### 独立软件与批次治理
+
+- 每项按独立软件申请；代码抽取后生成 `软件边界说明.md` 备案。
+- 旧批次默认不返工。
+- 文件缺失、编号错误、版本漂移、错误声明和精确重复粘贴属于确定性硬错误。
+- 标题、表格结构和近似段落相似度只分高/中/低风险；高风险进入人工复核，不自动裁定合并或阻断。
 
 ## 工作原则
 
-- **材料来源真实**：代码材料必须来自待申请项目源码，不编造代码。
-- **分阶段确认**：先确认业务理解和操作手册，再进行代码选择、抽取和申请字段确认。
-- **先草稿后正式资料**：先生成可审阅的 Markdown，确认后再生成正式资料。
-- **输出集中管理**：生成内容统一写入 `<项目>/<年份>年软件著作权申请资料/<软件全称>/`。
-- **规则来源唯一**：同类规则只保留一个主入口，避免多个规范文件互相冲突。
-- **自动检查不代替语义审查**：脚本负责结构、格式和可计算门禁，模型负责真实性、业务闭环和表达质量。
+- **真实证据优先**：代码材料只能来自待申请项目，页面字段、按钮、校验和下游链路不得猜测。
+- **分阶段确认**：每次只推进一个人工门禁；需要确认时立即停止。
+- **先 Markdown 后 Word**：先生成可审阅草稿，全部确认后再生成正式材料。
+- **门禁状态唯一**：`门禁状态.json` 只能由 `confirm_stage.py` 写入。
+- **版本可追溯**：证据计划和代码清单记录哈希；源码变化后正式材料自动失效。
+- **确定性与相似度分离**：可计算错误硬阻断，相似度仅作风险提示。
+- **自动检查不替代语义审查**：脚本检查结构和一致性，模型与用户确认业务真实性和表达质量。
+- **产物集中管理**：任务文件统一写入 `<项目>/<年份>年软件著作权申请资料/<软件全称>/`，不污染源码仓库。
 
-## 架构概览
+## 工作流
 
-Skill 按职责分为五层：
-
-```text
-执行编排层
-└── SKILL.md：定义阶段顺序、人工确认边界和停止条件
-
-规则与知识层
-└── references/：定义业务理解、操作手册、申请字段、代码材料等规则
-
-自动化脚本层
-└── scripts/：执行项目分析、草稿生成、质量检查、门禁和正式资料构建
-
-DOCX 基础设施层
-└── vendor/docx-toolkit/：提供 OpenXML DOCX 创建、预览、修复和校验能力
-
-任务产物层
-└── <项目>/<年份>年软件著作权申请资料/<软件全称>/：保存当前申请任务的证据、草稿和正式资料
-```
-
-操作手册阶段采用三份固定规则和两份任务期主文件：
+新任务默认流程：
 
 ```text
-固定规则
-├── references/manual_workflow.md        唯一流程入口
-├── references/manual_authoring_spec.md  唯一正文构建规范
-└── references/manual_quality_spec.md    唯一内容审查规范
-
-任务期主文件
-├── 草稿/操作手册写作计划.json           写作上下文与覆盖计划
-└── 草稿/操作手册审查报告.json           自检、交叉引用和语义审查结论
+初始化
+  → environment
+  → project（存在多个候选项目时）
+  → business
+  → content-quality
+  → manual
+  → material-plan
+  → 代码抽取与软件边界备案
+  → application-fields
+  → screenshot-method
+  → markdown
+  → 正式 Word 构建
+  → 最终件检查与 submission readiness
+  → 整批风险复检
 ```
+
+| 阶段 | 主要动作 | 核心产物或门禁 |
+|---|---|---|
+| 1. 初始化与环境检查 | 创建任务目录，检查 Python、DOCX、飞书及 SVG 转换能力 | `任务登记.json`、`环境检查.md/json`、`environment` |
+| 2. 项目分析 | 识别项目、子项目、源码根、技术栈和候选证据 | `analysis/project.json`、条件式 `project` |
+| 3. 业务理解 | 阅读项目证据，确认产品组成、业务闭环、角色、模块和手册范围 | `业务理解模型稿.json`、`业务理解.md/json`、`business` |
+| 4. 文档规划与手册 | 确定文档类型、篇幅和章节职责，模型撰写并执行多轮审查 | `操作手册写作计划.json`、`篇幅规划.json`、`操作手册.md`、审查报告、`content-quality`、`manual` |
+| 5. 材料证据计划 | 扫描多根源码，完成证据分级、功能映射、署名核验和哈希锁定 | `材料证据计划.md/json`、候选明细、`material-plan` |
+| 6. 代码材料与边界 | 按确认计划抽取源码，验证前后 30 页覆盖并生成软件边界备案 | `代码-前后30页.md`、`代码提取清单.json`、`软件边界说明.md` |
+| 7. 申请字段 | 对齐主体、版本、日期、环境、源程序量和主要功能 | `申请表信息.md`、字段对齐记录、`application-fields` |
+| 8. 截图与技术图表 | 选择截图方式；生成视觉证据清单；可创建飞书图表并导出 SVG/PNG | `截图准备清单.md`、`技术图表清单.md`、`screenshot-method` |
+| 9. 草稿总确认 | 运行逻辑和跨材料检查，确认全部 Markdown | `markdown` |
+| 10. 正式资料与复检 | 生成 DOCX，验证代码页数、图片、名称版本、事实和提交状态 | `正式资料/`、`FINAL ARTIFACT PASS`、`SUBMISSION READY` |
+| 11. 整批治理 | 对草稿和正式 DOCX 执行确定性检查与相似度风险分级 | `整批复检报告/` |
+
+详细规则见 [`SKILL.md`](SKILL.md) 和 [`references/skill-full-spec.md`](references/skill-full-spec.md)。
 
 ## 环境要求
 
-- Codex
+基础环境：
+
 - Python 3.10+
-- [`python-docx`](https://pypi.org/project/python-docx/)
-
-可选环境：
-
-- .NET SDK 8.0+：用于完整 OpenXML DOCX 生成和校验
-- Node.js（含 `npm`/`npx`）：用于安装和调用飞书 CLI
-- `lark-cli` 与 `whiteboard-cli`：用于在指定飞书在线文档中生成技术图表并导出内容自适应 SVG
-- `sharp-cli`（通过 `npx -y sharp-cli` 调用）：将透明 SVG 转为同名白底 PNG，供 Word 嵌入
+- `python-docx`
+- `pdfplumber`
+- `PyYAML`
+- `Pillow`
 
 安装 Python 依赖：
 
 ```powershell
-python -m pip install python-docx
+python -m pip install -r requirements.txt
 ```
 
-### 可选外部依赖（安装时自动检测）
+可选环境：
 
-运行依赖检测与自动安装：
+| 依赖 | 用途 | 缺失时行为 |
+|---|---|---|
+| .NET SDK 8.0+ | 完整 OpenXML DOCX 生成、预览和校验 | 可降级生成基础 DOCX，但会提示确认 |
+| pandoc | Markdown / 文档预览辅助 | 不影响核心流程 |
+| Node.js、npm、npx | 飞书画板和 SVG 转换 | 不生成图表时可由用户明确跳过 |
+| `lark-cli` | 飞书文档与画板操作 | 未授权时停止并引导授权 |
+| `whiteboard-cli` | 复杂图表写入飞书画板 | 缺失时停止或由用户明确跳过 |
+| `sharp-cli` | SVG 转白底 PNG | 缺失时图表导出环境不完整 |
+| human-writing | 模型化文风风险检查，不用于判定文本是否由 AI 生成 | 降级为基础文风检查 |
+| DeepSeek 视觉模型 | 页面类型、真实数据和疑似设计稿辅助判断 | 降级为确定性检查与人工提示 |
+
+> 使用 DeepSeek 视觉增强时，图片会发送到配置的外部 API。文件名预筛不等于完整 OCR 脱敏；涉及人员、电话、证件、地址等敏感信息时，应先人工脱敏。
+
+运行依赖检测：
 
 ```powershell
-python <skill目录>/scripts/install_dependencies.py --check   # 只检查
-python <skill目录>/scripts/install_dependencies.py --install # 自动安装缺失项
+python scripts/install_dependencies.py --check
+python scripts/install_dependencies.py --install
 ```
 
-| 依赖 | 用途 | 缺失时行为 | 安装方式 |
-|---|---|---|---|
-| human-writing | 文风风险检查（模型化文风形状，非 AI 判定） | 报告缺失并提示安装，不静默放行 | 自动 git clone 至 `~/.agents/skills/human-writing`（可用 `HUMAN_WRITING_SKILL_DIR` 覆盖） |
-| DeepSeek 视觉模型 | 视觉证据语义判定（页面类型/真实数据/疑似设计稿） | 视觉门禁降级为确定性检查 + 人工提示 | 设置环境变量 `DEEPSEEK_API_KEY`；可用 `DEEPSEEK_VISION_MODEL` / `DEEPSEEK_BASE_URL` 覆盖默认模型与端点 |
+## 飞书图表与 SVG 自适应导出
 
-两项均为可选：不安装时核心流程（证据计划、三分法、逻辑一致性、批次结构、提交就绪）完全可用，仅相关增强门禁降级。
+飞书 `preview` 快照会归一化为固定正方形画布，短图可能产生大面积底部空白。因此默认流程禁止使用 preview 作为 Word 图源：
 
-### 飞书 CLI 安装与配置
-
-飞书技术图表功能按两步检查：
-
-1. 检查 `lark-cli` 是否安装，并确认用户授权有效。
-2. 检查是否指定一个当前用户可编辑的飞书在线文档，用于集中存放画板。
-
-推荐安装并配置：
-
-```powershell
-npx @larksuite/cli@latest install
-lark-cli config init --new
-lark-cli auth login --recommend
-lark-cli auth status --verify
+```text
+飞书画板
+  → whiteboard +export --output-type svg
+  → 保留同名自适应 SVG
+  → sharp-cli 合并白色背景
+  → 最大 2400×3200、fit=inside 等比例 PNG
+  → Markdown 引用 PNG
+  → Word 嵌入
 ```
 
-也可以使用 npm 全局安装：
+检查工具：
 
 ```powershell
-npm install -g @larksuite/cli
-```
-
-同时安装官方 Agent Skills：
-
-```powershell
-npx skills add larksuite/cli -y -g
-```
-
-检查画板与 SVG 转换工具：
-
-```powershell
+lark-cli --version
 npx -y @larksuite/whiteboard-cli@^0.2.13 -v
-npx -y sharp-cli --help
+npx -y sharp-cli --version
 ```
 
-技术图表默认使用自适应 SVG 导出，并生成 Word 白底 PNG：
+批量导出：
 
 ```powershell
 python scripts/export_whiteboard_charts.py `
@@ -138,208 +173,205 @@ python scripts/export_whiteboard_charts.py `
   --height 3200
 ```
 
-运行软著环境检查时指定在线文档：
+脚本会：
 
-```powershell
-python scripts/check_environment.py `
-  --out-dir "<任务目录>" `
-  --feishu-doc "https://example.feishu.cn/wiki/<token>"
-```
+- 从技术图表清单解析画板 token；
+- 生成 `截图/<图表名称>.svg` 和同名白底 PNG；
+- 自动更新 `技术图表清单.md` 的“SVG源文件 / Word图片”列；
+- 自动将操作手册中的旧 JPG 或测试图引用切换到同名 PNG；
+- 生成 `截图/技术图表SVG导出报告.json`。
 
-不使用飞书画板时，必须显式跳过：
+每张 PNG 仍需通过视觉检查：中文清晰、连线完整、节点不重叠、内容不裁断、无固定画布空白。
 
-```powershell
-python scripts/check_environment.py --out-dir "<任务目录>" --skip-feishu
-```
-
-常用文档调用示例：
-
-```powershell
-lark-cli docs +fetch --api-version v2 --doc "<URL-or-token>" --as user
-```
-
-详细说明见 [`references/feishu_cli_setup.md`](references/feishu_cli_setup.md)。
+飞书授权和目标文档配置见 [`references/feishu_cli_setup.md`](references/feishu_cli_setup.md)。只有用户明确要求时才能使用 `--skip-feishu`。
 
 ## 安装
 
-将仓库克隆到 Codex Skills 目录：
+推荐安装到通用 Agent Skills 目录：
+
+```powershell
+git clone https://github.com/ydds123/software-copyright-materials.git `
+  "$HOME\.agents\skills\software-copyright-materials"
+```
+
+Codex 专用目录也可使用：
 
 ```powershell
 git clone https://github.com/ydds123/software-copyright-materials.git `
   "$HOME\.codex\skills\software-copyright-materials"
 ```
 
-如果目标目录已经存在，可以在目录中拉取最新版本：
+更新已有安装：
 
 ```powershell
-git -C "$HOME\.codex\skills\software-copyright-materials" pull
+git -C "$HOME\.agents\skills\software-copyright-materials" pull --ff-only
 ```
 
 ## 使用方式
 
-在 Codex 中导入或打开待申请的软件项目，然后提出软著资料生成请求，例如：
+在 Agent 中打开待申请项目后提出请求，例如：
 
 ```text
 请根据这个项目生成软件著作权申请资料。
 ```
 
-也可以明确指定需要的内容：
+也可以限定范围：
 
 ```text
-帮我生成这个项目的软著代码材料和操作手册。
+请为 Web 管理端和大屏端生成一套独立的软件著作权材料，不纳入人员定位报警功能。
 ```
 
-Skill 会按门禁逐步推进。每到需要确认的阶段，会停止并列出需要确认的具体事项；确认后再继续下一阶段。
+Skill 会在每个人工门禁停止，展示需要确认的业务口径或材料清单；用户确认后才继续。
 
-## 工作流
-
-| 阶段 | 主要动作 | 核心产物或门禁 |
-|---|---|---|
-| 1. 初始化与环境检查 | 创建任务目录，检查 Python、DOCX、飞书等能力 | `任务登记.json`、`环境检查.md/json`、`environment` |
-| 2. 项目分析 | 识别项目、子项目、技术栈、源码规模和候选证据 | `analysis/project.json` |
-| 3. 业务理解 | 模型阅读项目证据，形成产品组成、业务闭环、角色和模块理解 | `草稿/业务理解.md/json`、`business` |
-| 4. 操作手册 | 建立写作计划，模型直接撰写正文，执行自动检查和语义审查 | `操作手册写作计划.json`、`操作手册.md`、`操作手册审查报告.json`、`content-quality`、`manual` |
-| 5. 代码选择与抽取 | 按已确认的操作手册模块选择真实源码并生成程序鉴别材料 | `代码文件选择.json`、`code-selection`、代码草稿 |
-| 6. 申请字段 | 根据项目、业务理解和代码材料生成并确认申请字段 | `申请表信息.md`、`application-fields` |
-| 7. 截图与图表 | 用户选择截图方式；可生成、导入或明确跳过 | `用户截图/截图准备清单.md`、`截图/截图清单.json`、`screenshot-method` |
-| 8. 草稿总确认 | 检查业务、手册、代码、申请字段和截图口径一致 | `markdown` |
-| 9. 正式资料 | 生成申请信息、程序鉴别材料和文档鉴别材料并验证 | `正式资料/` |
-
-主要门禁依赖如下：
-
-```text
-business
-└── manual-draft
-    └── content-quality
-        └── manual
-            ├── code-selection
-            │   ├── extract-code
-            │   └── application-info
-            └── screenshot-method
-
-application-fields + code-selection + screenshot-method + content-quality + manual
-└── markdown
-    └── build-final
-```
-
-## 输出结构
-
-每个任务的主要输出位于：
+## 任务输出结构
 
 ```text
 <项目>/<年份>年软件著作权申请资料/<软件全称>/
-├── 任务登记.json                  # 项目、软件名称、任务路径和创建时间
-├── 门禁状态.json                  # 各阶段人工确认的唯一状态来源
+├── 任务登记.json
+├── 门禁状态.json
 ├── 环境检查.md
 ├── 环境检查.json
 ├── analysis/
-│   ├── project.json               # 项目技术栈、源码规模和子项目分析
-│   └── reference_profile.json     # 用户指定参照手册时生成
+│   ├── project.json
+│   └── reference_profile.json                 # 仅使用指定参照材料时
 ├── 草稿/
+│   ├── 业务理解模型稿.json
 │   ├── 业务理解.md
 │   ├── 业务理解.json
 │   ├── 操作手册写作计划.json
+│   ├── 篇幅规划.json
 │   ├── 操作手册.md
 │   ├── 操作手册审查报告.json
-│   ├── 代码文件选择.json
-│   └── 申请表信息.md
+│   ├── 材料证据计划.md
+│   ├── 材料证据计划.json
+│   ├── 候选全量明细.json
+│   ├── 独创性代表性审查报告.json
+│   ├── 事实断言表.json
+│   ├── 代码-前后30页.md
+│   ├── 代码提取清单.json
+│   ├── 软件边界说明.md
+│   ├── 申请表信息.md
+│   ├── 申请表字段对齐记录.md
+│   └── 技术图表清单.md                    # 仅生成飞书图表时
 ├── 截图/
-│   └── 截图清单.json               # 自动截图或导出结果清单
+│   ├── <图表名称>.svg
+│   ├── <图表名称>.png
+│   ├── 技术图表SVG导出报告.json
+│   └── 截图清单.json
 ├── 用户截图/
-│   └── 截图准备清单.md             # 用户自行截图时的页面准备清单
+│   └── 截图准备清单.md
 └── 正式资料/
     ├── 申请表信息.md
     ├── <软件全称>_程序鉴别材料.docx
     └── <软件全称>_文档鉴别材料.docx
 ```
 
-其中：
+并非每个任务都会生成所有可选文件。跨任务报告默认写入年份工作区下的独立目录，例如 `软件边界报告/` 和 `整批复检报告/`。
 
-- `analysis/` 保存机器分析结果和可复用的结构化证据。
-- `草稿/` 保存需要模型补写、脚本验证和用户确认的材料。
-- `截图/` 保存工具生成或导出的截图、图表。
-- `用户截图/` 保存用户自行提供的截图，避免与自动生成内容混淆。
-- `正式资料/` 只保存最终提交材料，不保存分析文件和中间报告。
+## 关键脚本
+
+### 初始化与分析
+
+| 脚本 | 用途 |
+|---|---|
+| `init_task.py` | 创建标准任务目录和任务登记 |
+| `check_environment.py` | 检查 DOCX、飞书、SVG 转换和可选增强能力 |
+| `analyze_project.py` | 分析项目结构、技术栈和源码规模 |
+| `generate_business_context.py` | 校验并输出业务理解 Markdown/JSON |
+
+### 文档规划与手册质量
+
+| 脚本 | 用途 |
+|---|---|
+| `propose_document_plan.py` | 根据业务和代码特征建议文档类型 |
+| `propose_coverage_plan.py` | 规划章节篇幅和功能覆盖 |
+| `manual_model.py` | 标准化业务理解与手册模块结构 |
+| `generate_manual_draft.py` | 对模型撰写的手册执行多轮检查 |
+| `content_quality_check.py` | 执行结构、术语、截图、角色、语义等质量门禁 |
+| `logic_consistency_check.py` | 检查编号、角色、状态和跨章节逻辑 |
+| `human_writing_adapter.py` | 调用可选文风检查能力 |
+
+### 证据计划与代码材料
+
+| 脚本 | 用途 |
+|---|---|
+| `propose_evidence_plan.py` | 生成 v2 材料证据计划和候选明细 |
+| `evidence_plan_check.py` | 校验证据映射、等级、署名、哈希与视觉申报 |
+| `extract_code_material.py` | 按计划从真实源码抽取程序材料 |
+| `verify_material_currency.py` | 检查源码与清单是否发生变化 |
+| `verify_coverage_in_pages.py` | 检查前后 30 页是否覆盖确认的证据 |
+| `code_boundary_report.py` | 生成任务级和整批软件边界说明 |
+| `propose_code_selection.py` | legacy v1 代码选择兼容入口 |
+
+### 截图、图表和视觉证据
+
+| 脚本 | 用途 |
+|---|---|
+| `propose_screenshot_plan.py` | 生成基于真实页面的截图计划 |
+| `capture_screenshots.py` | 整理截图及清单 |
+| `visual_evidence_check.py` | 检查覆盖率、证据等级、重复和脱敏状态 |
+| `visual_model_adapter.py` | 对接可选视觉模型 |
+| `export_whiteboard_charts.py` | 批量导出自适应 SVG 并生成 Word PNG |
+
+### 申请、门禁与最终验证
+
+| 脚本 | 用途 |
+|---|---|
+| `generate_application_info.py` | 生成申请表草稿并执行字段约束 |
+| `confirm_stage.py` | 校验并记录用户门禁确认 |
+| `gate_check.py` / `gate_dispatcher.py` | 检查受保护步骤的前置门禁 |
+| `cross_material_check.py` | 检查计划、手册、申请表和代码清单一致性 |
+| `build_docx_from_md.py` | 生成正式 DOCX 并验证代码分页 |
+| `final_artifact_check.py` | 从最终 DOCX/PDF 重新核对名称、版本、图片和事实 |
+| `submission_readiness_check.py` | 汇总确定性检查并输出提交就绪状态 |
+| `batch_structure_check.py` | 检查单稿重复和跨文档结构相似度 |
+| `batch_risk_report.py` | 对草稿和正式 DOCX 生成整批风险报告 |
 
 ## 仓库结构
 
 ```text
 .
-├── SKILL.md                         # Skill 主入口；定义完整工作流、门禁和强制规则
-├── README.md                        # 安装、使用、架构和仓库说明
-├── agents/
-│   └── openai.yaml                  # Codex 中展示的名称、简介和默认提示词
-│
-├── references/
-│   ├── business_understanding_rules.md  # 业务理解的证据、闭环和模型写作规则
-│   ├── module_classification_rules.md   # 台账型、业务型、混合型模块分类与字段要求
-│   ├── 业务理解模型稿模板.json          # 业务理解 JSON 的静态填写骨架
-│   ├── application_fields.md            # 申请表字段、来源、字数和一致性规则
-│   ├── code_selection_rules.md          # 代码文件候选、选择和覆盖规则
-│   ├── copyright_material_rules.md      # 程序鉴别材料分页和真实性规则
-│   ├── manual_workflow.md               # 操作手册阶段唯一流程入口
-│   ├── manual_authoring_spec.md         # 操作手册正文构建规范
-│   ├── manual_quality_spec.md           # 操作手册质量审查和 Gate 映射
-│   ├── 目标态样本手册.md               # 条件读取的高质量写作样本
-│   └── feishu_cli_setup.md              # 飞书 CLI、授权和跳过规则
-│
-├── scripts/
-│   ├── common.py                        # 路径、JSON、源码遍历等共享工具
-│   ├── safe_write.py                    # 拒绝空文件覆盖的安全写入工具
-│   ├── init_task.py                     # 创建标准任务目录和任务登记
-│   ├── check_environment.py             # 检查 Python、DOCX、飞书等环境
-│   ├── analyze_project.py               # 分析项目、子项目、技术栈和源码规模
-│   ├── generate_business_context.py     # 校验并输出业务理解 Markdown/JSON
-│   ├── manual_model.py                  # 业务理解和手册模块结构标准化
-│   ├── evidence_router.py               # 将证据缺口路由到具体源码文件
-│   ├── generate_manual_draft.py         # 验证模型撰写的操作手册，不生成正文
-│   ├── manual_audit.py                  # 维护统一写作计划和统一审查报告
-│   ├── manual_quality.py                # 操作手册基础质量规则
-│   ├── content_quality_check.py         # 操作手册自动 Gate 和语义审查入口
-│   ├── extract_reference_profile.py     # 提取参照手册结构画像
-│   ├── compare_reference.py             # 对比当前手册与参照手册
-│   ├── propose_code_selection.py        # 生成代码文件候选与模块覆盖建议
-│   ├── extract_code_material.py         # 从真实源码提取程序鉴别材料内容
-│   ├── generate_application_info.py     # 生成申请表信息草稿
-│   ├── capture_screenshots.py           # 截图清单和截图文件整理
-│   ├── build_docx_from_md.py            # 生成正式申请信息和 DOCX 材料
-│   ├── gate_check.py                    # 检查某步骤的前置门禁
-│   ├── confirm_stage.py                 # 记录用户确认并写入门禁状态
-│   └── gate_dispatcher.py               # 在受保护脚本执行前拦截未满足门禁
-│
-└── vendor/
-    └── docx-toolkit/
-        ├── SKILL.md                     # DOCX 工具自身的使用规则
-        ├── scripts/                     # 环境检查、预览和 OpenXML CLI
-        ├── references/                  # DOCX 创建、编辑、模板和排版指南
-        └── assets/                      # XSD、模板等校验资源
+├── AGENTS.md                 # 本仓库自动测试、提交和推送约定
+├── SKILL.md                  # Agent 路由、门禁与最高优先级规则
+├── README.md                 # 安装、能力、工作流和维护说明
+├── manifest.json             # Skill 包元数据
+├── requirements.txt          # Python 运行时依赖
+├── agents/                   # 不同 Agent 平台的展示与接口配置
+├── references/               # 业务、手册、申请、证据、路径和质量规则
+├── scripts/                  # 分析、生成、检查、门禁和构建脚本
+├── tests/                    # 回归测试
+├── evals/                    # 触发与行为评估用例
+├── failures/                 # 已知失败模式
+├── reports/                  # 审查或安全报告快照
+├── security/                 # 权限策略等安全资产
+├── skill-ir/                 # Skill IR 示例
+└── vendor/docx-toolkit/      # OpenXML DOCX 基础设施
 ```
 
-### 目录职责边界
+`reports/` 中的报告属于生成时点快照，不能替代当前源码、依赖和测试的实时检查。
 
-| 目录 | 负责什么 | 不负责什么 |
-|---|---|---|
-| `references/` | 保存稳定规则、字段定义和写作参考 | 不保存任务结果，不执行自动化 |
-| `scripts/` | 分析、验证、生成和门禁控制 | 不保存项目专属规则，不编造业务内容 |
-| `vendor/docx-toolkit/` | 提供通用 DOCX/OpenXML 能力 | 不决定软著业务口径和操作手册内容 |
-| 任务目录 `analysis/` | 保存项目分析和结构化证据 | 不保存最终提交文件 |
-| 任务目录 `草稿/` | 保存待审查、待确认的业务材料 | 不直接作为最终提交目录 |
-| 任务目录 `正式资料/` | 保存确认后的最终材料 | 不保存临时文件和分析报告 |
+## 开发与验证
 
-### `vendor/docx-toolkit` 的作用
+运行全部回归测试：
 
-`vendor` 表示随仓库内置的第三方或独立工具。`docx-toolkit` 基于 .NET OpenXML SDK，负责：
+```powershell
+python -m unittest discover -s tests -q
+```
 
-- 创建、编辑和格式化 DOCX。
-- 处理标题、表格、图片、页眉页脚、页码和分节。
-- 校验 Word 内部 XML 结构和元素顺序。
-- 预览、修复和验证正式 DOCX。
+提交前至少检查：
 
-业务脚本通过它完成正式 Word 的结构校验，但软著材料内容、业务判断和门禁仍由当前 Skill 决定。
+```powershell
+git diff --check
+python -m unittest discover -s tests -q
+```
+
+本仓库约定：每次完成 Skill 调整后，在测试和敏感信息检查通过的前提下，自动提交并推送到 `origin/main`；禁止强制推送。详见 [`AGENTS.md`](AGENTS.md)。
 
 ## 注意事项
 
-- 生成材料不能替代软件著作权登记机构的正式审查。
-- 正式提交前，请人工核对软件名称、版本号、著作权人、日期和运行环境。
-- 若跳过截图，操作手册会保留截图预留位置，但可能需要在提交前补充。
-- 不同登记场景的材料要求可能变化，请以办理时的官方要求为准。
+- 本 Skill 用于降低材料补正风险，不保证登记机关最终结论。
+- 正式提交前必须人工核对软件名称、版本、著作权人、完成日期、运行环境和截图内容。
+- 截图占位未回填时，系统可生成 Word，但会提示补正风险。
+- 技术图表不能替代真实业务页面截图。
+- DeepSeek 等外部视觉模型属于可选增强能力，使用前应确认数据合规和脱敏情况。
+- 不同地区和时间的办理要求可能变化，应以提交时的官方要求为准。
