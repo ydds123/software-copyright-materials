@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-from build_docx_from_md import _fit_image_size, _is_feature_flowchart, resolve_manual_image
+from build_docx_from_md import _fit_image_size, _is_feature_flowchart, build_manual_docx_python, resolve_manual_image
 from content_quality_check import check_login_and_homepage
 from export_whiteboard_charts import parse_chart_rows, update_chart_list, update_manual_references
 
@@ -113,6 +113,23 @@ class ExportWhiteboardChartsTest(unittest.TestCase):
         text = "## 1 系统登录\n\n![系统登录界面](../用户截图/登录页面.png)\n"
         ok, message = check_login_and_homepage(text)
         self.assertTrue(ok, message)
+
+    def test_module_type_note_rendered_in_docx(self):
+        from docx import Document as DocxDocument
+        with tempfile.TemporaryDirectory() as td:
+            md = Path(td) / "manual.md"
+            out = Path(td) / "out.docx"
+            md.write_text(
+                "# 测试手册\n\n## 3 基础台账\n\n### 3.1 区域管理\n\n"
+                "> **模块类型：台账型**（区域台账同时支撑电子围栏划分与风险四色图着色）\n\n"
+                "区域管理维护厂区区域台账。\n",
+                encoding="utf-8",
+            )
+            build_manual_docx_python(md, out, md.parent, "测试软件", "V1.0")
+            doc = DocxDocument(str(out))
+            texts = [p.text for p in doc.paragraphs]
+            self.assertTrue(any("模块类型：台账型" in t for t in texts), texts)
+            self.assertTrue(any("区域台账同时支撑电子围栏划分" in t for t in texts), texts)
 
 
 if __name__ == "__main__":

@@ -1008,6 +1008,9 @@ def build_manual_docx_python(md_path: Path, out_path: Path, base_dir: Path, soft
         if in_fence:
             continue
         if re.match(r"> \*\*模块类型：", stripped):
+            # 模块类型标注：剥掉引用前缀，渲染为普通段落（支持 **加粗**）
+            stripped = stripped.lstrip("> ").strip()
+            add_formatted_paragraph(document, stripped, "SimSun", 10.5)
             continue
         if stripped.startswith("<!--") and "截图" in stripped:
             stripped = "【截图预留：请在此处插入当前功能页面或操作结果截图。】"
